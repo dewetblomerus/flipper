@@ -13,6 +13,9 @@ defmodule FlipperWeb.DraftLive.Show do
           <.button :if={@draft.photos == []} id="refresh-draft" phx-click="refresh" variant="primary">
             Refresh
           </.button>
+          <.button :if={redo_edit?(@draft)} id="redo-edits" phx-click="redo_edits">
+            Redo edit
+          </.button>
           <.button navigate={~p"/drafts"}>
             <.icon name="hero-arrow-left" />
           </.button>
@@ -31,8 +34,12 @@ defmodule FlipperWeb.DraftLive.Show do
       <p :if={@draft.fetch_error}>{@draft.fetch_error}</p>
 
       <ul :if={@draft.photos != []} id="draft-photos" class="space-y-8">
-        <li :for={photo <- @draft.photos} id={"photo-#{photo.id}"} class="grid grid-cols-2 gap-4">
-          <%= if photo.edited_path do %>
+        <li
+          :for={photo <- @draft.photos}
+          id={"photo-#{photo.id}"}
+          class={[first_photo?(@draft, photo) && "grid grid-cols-2 gap-4"]}
+        >
+          <%= if first_photo?(@draft, photo) && photo.edited_path do %>
             <button
               type="button"
               id={"photo-#{photo.id}-original"}
@@ -72,21 +79,29 @@ defmodule FlipperWeb.DraftLive.Show do
               <span class="mt-2 block text-sm">Edited</span>
             </button>
           <% else %>
-            <div id={"photo-#{photo.id}-original"}>
+            <%= if first_photo?(@draft, photo) do %>
+              <div id={"photo-#{photo.id}-original"}>
+                <img
+                  src={~p"/photos/#{photo}"}
+                  alt={"Original #{photo.position}"}
+                  class="aspect-square w-full rounded-lg bg-base-200 object-contain"
+                />
+                <span class="mt-2 block text-sm">Original</span>
+              </div>
+              <div
+                id={"photo-#{photo.id}-edited"}
+                class="flex items-center justify-center gap-2 rounded-xl border border-dashed border-base-300"
+              >
+                <.icon name="hero-arrow-path" class="size-4 motion-safe:animate-spin" />
+                <span class="text-sm">Editing</span>
+              </div>
+            <% else %>
               <img
                 src={~p"/photos/#{photo}"}
-                alt={"Original #{photo.position}"}
-                class="aspect-square w-full rounded-lg bg-base-200 object-contain"
+                alt={"Photo #{photo.position}"}
+                class="w-full max-w-md rounded-lg"
               />
-              <span class="mt-2 block text-sm">Original</span>
-            </div>
-            <div
-              id={"photo-#{photo.id}-edited"}
-              class="flex items-center justify-center gap-2 rounded-xl border border-dashed border-base-300"
-            >
-              <.icon name="hero-arrow-path" class="size-4 motion-safe:animate-spin" />
-              <span class="text-sm">Editing</span>
-            </div>
+            <% end %>
           <% end %>
         </li>
       </ul>
@@ -126,6 +141,17 @@ defmodule FlipperWeb.DraftLive.Show do
   end
 
   @impl true
+  def handle_event("redo_edits", _params, socket) do
+    case Drafts.redo_edits(socket.assigns.draft) do
+      {:ok, draft} ->
+        {:noreply, assign(socket, :draft, Drafts.get_draft!(draft.id))}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Could not redo the edit.")}
+    end
+  end
+
+  @impl true
   def handle_event("choose_edit", %{"id" => id, "use_edited" => choice}, socket)
       when choice in ["true", "false"] do
     draft = socket.assigns.draft
@@ -135,6 +161,12 @@ defmodule FlipperWeb.DraftLive.Show do
       photo -> save_choice(socket, draft, photo, choice == "true")
     end
   end
+
+  defp first_photo?(%{photos: [first | _]}, photo), do: photo.id == first.id
+  defp first_photo?(_draft, _photo), do: false
+
+  defp redo_edit?(%{photos: [first | _]}), do: is_binary(first.edited_path)
+  defp redo_edit?(_draft), do: false
 
   defp save_choice(socket, draft, photo, use_edited) do
     case Drafts.choose_edit(photo, use_edited) do

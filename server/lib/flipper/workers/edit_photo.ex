@@ -1,6 +1,6 @@
 defmodule Flipper.Workers.EditPhoto do
   @moduledoc """
-  Crops one photo and moves the draft when every photo is edited.
+  Crops the first photo and moves the draft when that edit is saved.
   """
 
   use Oban.Worker,

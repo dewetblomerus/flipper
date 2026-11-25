@@ -6,7 +6,7 @@ defmodule Flipper.Photos.FakeEditor do
   @behaviour Flipper.Photos.Editor
 
   @impl true
-  def crop(_input, output) do
+  def crop(_input, output, _title) do
     File.write!(output, "edited")
     send(self(), {:photo_cropped, output})
     {:ok, %{left: 1, top: 2, width: 3, height: 4, content_type: "image/png"}}

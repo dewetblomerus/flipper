@@ -80,13 +80,32 @@ defmodule Flipper.Drafts do
     update_state(draft, "photo_edits_drafted")
   end
 
+  def transition(%Draft{state: "photo_edits_drafted"} = draft, :photos_taken) do
+    update_state(draft, "photos_taken")
+  end
+
   def transition(%Draft{}, _to), do: {:error, :invalid_transition}
 
   def edit_photo(%Photo{} = photo) do
-    with :ok <- write_edit(photo),
-         :ok <- finish_draft(photo.draft_id) do
-      broadcast_changed(photo.draft_id)
+    if first_photo?(photo) do
+      with :ok <- write_edit(photo),
+           :ok <- finish_draft(photo.draft_id) do
+        broadcast_changed(photo.draft_id)
+        :ok
+      end
+    else
       :ok
+    end
+  end
+
+  def redo_edits(%Draft{} = draft) do
+    case clear_and_enqueue(draft) do
+      {:ok, draft} ->
+        broadcast_changed(draft.id)
+        {:ok, draft}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -209,8 +228,49 @@ defmodule Flipper.Drafts do
   end
 
   defp enqueue_edits(%Draft{id: id}) do
-    ids = Repo.all(from p in Photo, where: p.draft_id == ^id, select: p.id)
+    case first_photo(id) do
+      %Photo{id: photo_id} -> insert_edit_jobs([photo_id])
+      nil -> :ok
+    end
+  end
 
+  defp clear_and_enqueue(%Draft{id: id}) do
+    Repo.transaction(fn ->
+      draft = Repo.one!(from d in Draft, where: d.id == ^id, lock: "FOR UPDATE")
+      clear_first_edit(draft, first_photo(id))
+    end)
+  end
+
+  defp clear_first_edit(draft, %Photo{edited_path: path} = photo) when is_binary(path) do
+    clear_edit(photo)
+    draft = return_to_photos_taken(draft)
+    insert_edit_jobs([photo.id])
+    draft
+  end
+
+  defp clear_first_edit(draft, _photo), do: draft
+
+  defp clear_edit(photo) do
+    photo
+    |> Ecto.Changeset.change(%{
+      edited_path: nil,
+      edited_content_type: nil,
+      subject_left: nil,
+      subject_top: nil,
+      subject_width: nil,
+      subject_height: nil
+    })
+    |> Repo.update!()
+  end
+
+  defp return_to_photos_taken(draft) do
+    case transition(draft, :photos_taken) do
+      {:ok, draft} -> draft
+      {:error, :invalid_transition} -> draft
+    end
+  end
+
+  defp insert_edit_jobs(ids) do
     Enum.each(ids, fn photo_id ->
       case %{photo_id: photo_id} |> EditPhoto.new() |> Oban.insert() do
         {:ok, _job} -> :ok
@@ -223,8 +283,9 @@ defmodule Flipper.Drafts do
 
   defp write_edit(%Photo{} = photo) do
     output = Path.join(Path.dirname(photo.original_path), "#{photo.position}-edited.png")
+    photo = Repo.preload(photo, :draft)
 
-    with {:ok, box} <- editor().crop(photo.original_path, output) do
+    with {:ok, box} <- editor().crop(photo.original_path, output, photo.draft.title) do
       photo
       |> Photo.edit_changeset(%{
         edited_path: output,
@@ -264,7 +325,21 @@ defmodule Flipper.Drafts do
   end
 
   defp edits_pending?(draft_id) do
-    Repo.exists?(from p in Photo, where: p.draft_id == ^draft_id and is_nil(p.edited_path))
+    case first_photo(draft_id) do
+      %Photo{edited_path: nil} -> true
+      _photo -> false
+    end
+  end
+
+  defp first_photo?(photo) do
+    case first_photo(photo.draft_id) do
+      %Photo{id: id} -> id == photo.id
+      nil -> false
+    end
+  end
+
+  defp first_photo(draft_id) do
+    Repo.one(from p in Photo, where: p.draft_id == ^draft_id, order_by: p.position, limit: 1)
   end
 
   defp finish_transition(draft) do

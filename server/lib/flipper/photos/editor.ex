@@ -3,6 +3,6 @@ defmodule Flipper.Photos.Editor do
   Crops a photo to its subject and reports that box in original pixels.
   """
 
-  @callback crop(input :: String.t(), output :: String.t()) ::
+  @callback crop(input :: String.t(), output :: String.t(), title :: String.t() | nil) ::
               {:ok, map()} | {:error, term()}
 end

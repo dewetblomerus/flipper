@@ -130,6 +130,23 @@ defmodule FlipperWeb.DraftLiveTest do
       assert ["image/jpeg" <> _] = get_resp_header(conn, "content-type")
     end
 
+    test "later photos stay original while the first photo is edited", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=22")
+      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+
+      [first, second] = Drafts.get_draft!(draft.id).photos
+      assert has_element?(view, "#photo-#{first.id}-edited", "Editing")
+      refute has_element?(view, "#photo-#{second.id}-edited")
+
+      assert :ok = perform_job(EditPhoto, %{photo_id: first.id})
+      html = render(view)
+      assert html =~ "photo_edits_drafted"
+      assert html =~ "/photos/#{first.id}/edited"
+      refute has_element?(view, "#photo-#{second.id}-edited")
+      assert has_element?(view, "#photo-#{second.id} img")
+    end
+
     test "shows the title and photos when the fetch finishes", %{conn: conn} do
       {:ok, draft} = Drafts.paste_url(@url)
       {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
@@ -167,6 +184,15 @@ defmodule FlipperWeb.DraftLiveTest do
       assert Repo.get!(Photo, photo.id).use_edited == false
       assert has_element?(view, "#photo-#{photo.id}-original[aria-pressed='true']")
       assert Drafts.get_draft!(draft.id).state == "photo_edits_drafted"
+
+      Repo.update_all(from(j in Oban.Job, where: j.state == "available"),
+        set: [state: "discarded"]
+      )
+
+      html = view |> element("#redo-edits", "Redo edit") |> render_click()
+      assert html =~ "Editing"
+      assert html =~ "photos_taken"
+      assert [_] = all_enqueued(worker: EditPhoto, args: %{photo_id: photo.id})
     end
 
     test "serves the edited photo and refuses a path outside the photo directory", %{conn: conn} do

@@ -2,7 +2,7 @@
 
 - Transitions live in one place so the allowed path stays obvious.
 - The photo edit job is independent of other workers.
-- Subject crop uses local background removal and a bounding box.
+- Subject crop uses local Grounding DINO to find the product box from the draft title, then crops the original. Only the first photo is cropped. The background stays.
 - Reading a Seller Hub draft uses the seller's session. Writing to eBay stays behind the approval gate. Approval is one draft state.
 - The automated step is the photo edit. Further automations are new states and jobs.
 - Single household, and strictly single tenant. One database is the whole business. A multi-tenant SaaS is a rewrite on a fresh database.

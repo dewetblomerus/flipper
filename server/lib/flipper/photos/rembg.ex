@@ -1,16 +1,17 @@
 defmodule Flipper.Photos.Rembg do
   @moduledoc """
-  Crops a photo with the local rembg install.
+  Finds the product box with local Grounding DINO and crops the original.
   """
 
   @behaviour Flipper.Photos.Editor
 
   @impl true
-  def crop(input, output) when is_binary(input) and is_binary(output) do
+  def crop(input, output, title)
+      when is_binary(input) and is_binary(output) and (is_binary(title) or is_nil(title)) do
     python = Application.fetch_env!(:flipper, :photo_edit_python)
     script = Application.app_dir(:flipper, "priv/photo_edit.py")
 
-    case System.cmd(python, [script, input, output], stderr_to_stdout: true) do
+    case System.cmd(python, [script, input, output, title || ""], stderr_to_stdout: true) do
       {out, 0} -> decode_box(out)
       {out, status} -> {:error, "photo edit exited #{status}: #{String.trim(out)}"}
     end
