@@ -17,7 +17,8 @@ config :flipper,
 
 config :flipper, Oban,
   repo: Flipper.Repo,
-  queues: [drafts: 2, photos: 1],
+  # Every worker that calls eBay uses the ebay queue. Its limit of 1 keeps requests serial.
+  queues: [ebay: 1, photos: 1],
   plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
 
 # Configure the endpoint
@@ -74,6 +75,9 @@ config :logger, :default_formatter,
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+
+# Keep secrets out of logged params.
+config :phoenix, :filter_parameters, ["password", "ebay_cookie"]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

@@ -1,6 +1,7 @@
 defmodule Flipper.Ebay.SessionTest do
   use ExUnit.Case, async: false
 
+  alias Flipper.Ebay.SellerHub.Client
   alias Flipper.Ebay.Session
 
   setup do
@@ -53,11 +54,76 @@ defmodule Flipper.Ebay.SessionTest do
 
   test "load reads the saved file back into memory", %{path: path} do
     assert :ok = Session.set("secret-value")
-    Agent.update(Session, fn _ -> nil end)
+    Agent.update(Session, &%{&1 | cookie: nil})
     assert is_nil(Session.cookie())
 
     assert :ok = Session.load()
     assert Session.cookie() == "secret-value"
     assert File.read!(path) == "secret-value"
+  end
+
+  test "status follows the cookie from missing to saved to rejected" do
+    assert Session.status() == :missing
+
+    assert :ok = Session.set("secret-value")
+    assert Session.status() == :ok
+
+    assert :ok = Session.reject("secret-value")
+    assert Session.status() == :rejected
+    assert Session.cookie() == "secret-value"
+
+    assert :ok = Session.set("new-value")
+    assert Session.status() == :ok
+
+    assert :ok = Session.reject("new-value")
+    assert :ok = Session.load()
+    assert Session.status() == :ok
+  end
+
+  test "rejecting an old cookie leaves the current one alone" do
+    assert :ok = Session.set("new-value")
+    assert :ok = Session.reject("old-value")
+    assert Session.status() == :ok
+  end
+
+  test "subscribers hear about a new cookie and a rejected one" do
+    assert :ok = Session.subscribe()
+
+    assert :ok = Session.set("secret-value")
+    assert_received :ebay_session_changed
+
+    assert :ok = Session.reject("old-value")
+    refute_received :ebay_session_changed
+
+    assert :ok = Session.reject("secret-value")
+    assert_received :ebay_session_changed
+  end
+
+  test "a sign-in redirect rejects the cookie" do
+    assert :ok = Session.set("secret-value")
+    redirect_ebay_to("https://signin.ebay.com/ws/eBayISAPI.dll?SignIn")
+
+    assert {:error, "eBay session is not signed in"} =
+             Client.fetch("1", plug: {Req.Test, __MODULE__})
+
+    assert Session.status() == :rejected
+  end
+
+  test "a browser check leaves the cookie alone" do
+    assert :ok = Session.set("secret-value")
+    redirect_ebay_to("https://www.ebay.com/splashui/challenge?ap=1")
+
+    assert {:error, "eBay asked for a browser check"} =
+             Client.fetch("1", plug: {Req.Test, __MODULE__})
+
+    assert Session.status() == :ok
+  end
+
+  defp redirect_ebay_to(location) do
+    Req.Test.stub(__MODULE__, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("location", location)
+      |> Plug.Conn.send_resp(307, "")
+    end)
   end
 end

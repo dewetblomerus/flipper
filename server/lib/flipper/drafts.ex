@@ -150,15 +150,10 @@ defmodule Flipper.Drafts do
   def retry_ebay_photo(%Draft{state: "photo_edits_approved", id: id}) do
     case first_photo(id) do
       %Photo{use_edited: true, ebay_error: error} = photo when is_binary(error) ->
-        {:ok, photo} =
-          Repo.transaction(fn ->
-            {:ok, photo} = update_photo(photo, ebay_error: nil)
-            insert_job(ReplaceEbayPhoto.new(%{photo_id: photo.id}))
-            photo
-          end)
-
-        broadcast_changed(id)
-        {:ok, photo}
+        with {:ok, photo} <- clear_error_and_enqueue(photo) do
+          broadcast_changed(id)
+          {:ok, photo}
+        end
 
       _photo ->
         {:error, :nothing_to_retry}
@@ -166,6 +161,11 @@ defmodule Flipper.Drafts do
   end
 
   def retry_ebay_photo(%Draft{}), do: {:error, :nothing_to_retry}
+
+  def retry_failed do
+    Enum.each(failed_fetches(), &retry_fetch/1)
+    Enum.each(failed_replacements(), &retry_ebay_photo/1)
+  end
 
   def fetch_from_ebay(%Draft{} = draft) do
     if has_photos?(draft) do
@@ -274,6 +274,14 @@ defmodule Flipper.Drafts do
       %Photo{id: photo_id} -> insert_edit_jobs([photo_id])
       nil -> :ok
     end
+  end
+
+  defp clear_error_and_enqueue(photo) do
+    Repo.transaction(fn ->
+      {:ok, photo} = update_photo(photo, ebay_error: nil)
+      insert_job(ReplaceEbayPhoto.new(%{photo_id: photo.id}))
+      photo
+    end)
   end
 
   defp clear_and_enqueue(%Draft{id: id}) do
@@ -478,6 +486,26 @@ defmodule Flipper.Drafts do
         else
           {:error, changeset}
         end
+    end
+  end
+
+  defp failed_fetches do
+    Repo.all(from d in Draft, where: not is_nil(d.fetch_error), order_by: d.id)
+  end
+
+  defp failed_replacements do
+    Repo.all(
+      from d in Draft,
+        join: p in assoc(d, :photos),
+        where: not is_nil(p.ebay_error),
+        distinct: true,
+        order_by: d.id
+    )
+  end
+
+  defp retry_fetch(draft) do
+    with {:ok, draft} <- refresh(draft) do
+      broadcast_changed(draft.id)
     end
   end
 
