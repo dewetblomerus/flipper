@@ -38,5 +38,8 @@ server/assets/node_modules/
 # Draft photos downloaded from eBay.
 server/uploads/
 
+# Bytecode from the photo edit script.
+server/priv/__pycache__/
+
 # Saved eBay session cookie.
 server/ebay_cookie

@@ -39,6 +39,7 @@ erDiagram
         integer subject_top
         integer subject_width
         integer subject_height
+        boolean use_edited
         datetime inserted_at
         datetime updated_at
     }
@@ -53,6 +54,7 @@ erDiagram
 - `drafts.ebay_draft_id` is the Seller Hub `draft_id` from a pasted eBay draft URL. It is unique. See [Drafts](drafts.md).
 - `photos.position` is unique per draft. Deleting a draft deletes its photos.
 - `original_path` and `edited_path` are disk paths. The original is never replaced. The edit job writes `edited_path` and `edited_content_type`. A rework overwrites the edit in place.
-- The subject box is `subject_left`, `subject_top`, `subject_width`, and `subject_height`, in pixels of the original. Width and height count pixels. All four are null, or all four are present with width and height greater than zero. The crop reuses this box.
+- The subject box is `subject_left`, `subject_top`, `subject_width`, and `subject_height`, in pixels of the original. Width and height count pixels. All four are null, or all four are present with width and height greater than zero. A check constraint enforces that. The crop reuses this box.
+- `photos.use_edited` is true when the person picks the edit and false when they pick the original. It stays null until they choose.
 - An approved draft uses `edited_path` when it is present.
-- The edit job is an Oban job.
+- Reaching `photos_taken` enqueues one Oban edit job per photo. The draft moves to `photo_edits_drafted` when every photo has an edit.

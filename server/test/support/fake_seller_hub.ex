@@ -13,6 +13,17 @@ defmodule Flipper.Ebay.FakeSellerHub do
     {:error, "eBay did not return the draft"}
   end
 
+  def fetch("22") do
+    {:ok,
+     %{
+       title: "Pair of lamps",
+       photo_urls: [
+         "https://i.ebayimg.com/images/g/abc/s-l1600.jpg",
+         "https://i.ebayimg.com/images/g/def/s-l1600.jpg"
+       ]
+     }}
+  end
+
   def fetch(_ebay_draft_id) do
     {:ok,
      %{

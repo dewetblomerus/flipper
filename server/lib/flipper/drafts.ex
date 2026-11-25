@@ -1,6 +1,6 @@
 defmodule Flipper.Drafts do
   @moduledoc """
-  Lists drafts and creates one from a pasted eBay draft URL.
+  Lists drafts, creates one from a pasted eBay draft URL, and edits its photos.
   """
 
   import Ecto.Query
@@ -9,6 +9,7 @@ defmodule Flipper.Drafts do
   alias Flipper.Drafts.Photo
   alias Flipper.Ebay.SellerHub
   alias Flipper.Repo
+  alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
 
   def list_drafts do
@@ -27,15 +28,14 @@ defmodule Flipper.Drafts do
 
   def get_photo!(id), do: Repo.get!(Photo, id)
 
-  def photo_file(%Photo{} = photo) do
-    path = Path.expand(photo.original_path)
-    root = Path.expand(photo_dir())
+  def photo_file(%Photo{} = photo), do: photo_file(photo, :original)
 
-    if String.starts_with?(path, root <> "/") and File.regular?(path) do
-      {:ok, path, photo.original_content_type}
-    else
-      :error
-    end
+  def photo_file(%Photo{} = photo, :original) do
+    safe_file(photo.original_path, photo.original_content_type)
+  end
+
+  def photo_file(%Photo{} = photo, :edited) do
+    safe_file(photo.edited_path, photo.edited_content_type)
   end
 
   def paste_url(url) when is_binary(url) do
@@ -60,14 +60,51 @@ defmodule Flipper.Drafts do
 
   def transition(%Draft{state: state} = draft, :photos_taken)
       when state in ["started", "awaiting_photos"] do
-    update_state(draft, "photos_taken")
+    Repo.transaction(fn ->
+      case update_state(draft, "photos_taken") do
+        {:ok, draft} ->
+          enqueue_edits(draft)
+          draft
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    end)
   end
 
   def transition(%Draft{state: "started"} = draft, :awaiting_photos) do
     update_state(draft, "awaiting_photos")
   end
 
+  def transition(%Draft{state: "photos_taken"} = draft, :photo_edits_drafted) do
+    update_state(draft, "photo_edits_drafted")
+  end
+
   def transition(%Draft{}, _to), do: {:error, :invalid_transition}
+
+  def edit_photo(%Photo{} = photo) do
+    with :ok <- write_edit(photo),
+         :ok <- finish_draft(photo.draft_id) do
+      broadcast_changed(photo.draft_id)
+      :ok
+    end
+  end
+
+  def choose_edit(%Photo{edited_path: nil}, _use_edited), do: {:error, :not_edited}
+
+  def choose_edit(%Photo{} = photo, use_edited) when is_boolean(use_edited) do
+    photo
+    |> Ecto.Changeset.change(use_edited: use_edited)
+    |> Repo.update()
+    |> case do
+      {:ok, photo} ->
+        broadcast_changed(photo.draft_id)
+        {:ok, photo}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   def fetch_from_ebay(%Draft{} = draft) do
     if has_photos?(draft) do
@@ -103,7 +140,7 @@ defmodule Flipper.Drafts do
   end
 
   def broadcast_fetched(%Draft{id: id}) do
-    Phoenix.PubSub.broadcast(Flipper.PubSub, "draft:#{id}", {:draft_fetched, id})
+    broadcast(id, {:draft_fetched, id})
   end
 
   defp save_fetch(draft, title, urls) do
@@ -169,6 +206,96 @@ defmodule Flipper.Drafts do
     draft
     |> Ecto.Changeset.change(state: state)
     |> Repo.update()
+  end
+
+  defp enqueue_edits(%Draft{id: id}) do
+    ids = Repo.all(from p in Photo, where: p.draft_id == ^id, select: p.id)
+
+    Enum.each(ids, fn photo_id ->
+      case %{photo_id: photo_id} |> EditPhoto.new() |> Oban.insert() do
+        {:ok, _job} -> :ok
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp write_edit(%Photo{edited_path: path}) when is_binary(path), do: :ok
+
+  defp write_edit(%Photo{} = photo) do
+    output = Path.join(Path.dirname(photo.original_path), "#{photo.position}-edited.png")
+
+    with {:ok, box} <- editor().crop(photo.original_path, output) do
+      photo
+      |> Photo.edit_changeset(%{
+        edited_path: output,
+        edited_content_type: box.content_type,
+        subject_left: box.left,
+        subject_top: box.top,
+        subject_width: box.width,
+        subject_height: box.height
+      })
+      |> Repo.update()
+      |> case do
+        {:ok, _photo} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp finish_draft(draft_id) do
+    draft_id
+    |> lock_and_finish()
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp lock_and_finish(draft_id) do
+    Repo.transaction(fn ->
+      draft = Repo.one!(from d in Draft, where: d.id == ^draft_id, lock: "FOR UPDATE")
+
+      if edits_pending?(draft_id) do
+        :ok
+      else
+        finish_transition(draft)
+      end
+    end)
+  end
+
+  defp edits_pending?(draft_id) do
+    Repo.exists?(from p in Photo, where: p.draft_id == ^draft_id and is_nil(p.edited_path))
+  end
+
+  defp finish_transition(draft) do
+    case transition(draft, :photo_edits_drafted) do
+      {:ok, _draft} -> :ok
+      {:error, :invalid_transition} -> :ok
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp editor, do: Application.fetch_env!(:flipper, :photo_editor)
+
+  defp safe_file(path, type) when is_binary(path) and is_binary(type) do
+    path = Path.expand(path)
+    root = Path.expand(photo_dir())
+
+    if String.starts_with?(path, root <> "/") and File.regular?(path) do
+      {:ok, path, type}
+    else
+      :error
+    end
+  end
+
+  defp safe_file(_path, _type), do: :error
+
+  defp broadcast_changed(draft_id) do
+    broadcast(draft_id, {:draft_changed, draft_id})
+  end
+
+  defp broadcast(id, message) do
+    Phoenix.PubSub.broadcast(Flipper.PubSub, "draft:#{id}", message)
   end
 
   defp insert_draft(ebay_draft_id) do

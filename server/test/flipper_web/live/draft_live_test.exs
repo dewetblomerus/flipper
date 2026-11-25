@@ -8,6 +8,7 @@ defmodule FlipperWeb.DraftLiveTest do
   alias Flipper.Drafts
   alias Flipper.Drafts.Photo
   alias Flipper.Repo
+  alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022"
@@ -93,7 +94,8 @@ defmodule FlipperWeb.DraftLiveTest do
       assert html =~ "Draft #{draft.id}"
       assert html =~ draft.ebay_draft_id
       assert html =~ "started"
-      assert html =~ "max-w-2xl"
+      assert html =~ "max-w-5xl"
+      refute html =~ "max-w-2xl"
       refute html =~ "max-w-4xl"
       assert html =~ "Fetching title and photos."
       assert html =~ "Refresh"
@@ -138,7 +140,56 @@ defmodule FlipperWeb.DraftLiveTest do
       assert html =~ "Vintage lamp"
       assert html =~ "photos_taken"
       assert html =~ "/photos/"
+      assert html =~ "Editing"
       refute html =~ "Refresh"
+    end
+
+    test "shows the original and the edit and stores the choice", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+
+      photo = hd(Drafts.get_draft!(draft.id).photos)
+      assert has_element?(view, "#photo-#{photo.id}-edited", "Editing")
+
+      assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+      html = render(view)
+      assert html =~ "photo_edits_drafted"
+      assert html =~ "/photos/#{photo.id}/edited"
+      refute html =~ "Editing"
+
+      view |> element("#photo-#{photo.id}-edited") |> render_click()
+      assert Repo.get!(Photo, photo.id).use_edited == true
+      assert Drafts.get_draft!(draft.id).state == "photo_edits_drafted"
+      assert has_element?(view, "#photo-#{photo.id}-edited[aria-pressed='true']")
+
+      view |> element("#photo-#{photo.id}-original") |> render_click()
+      assert Repo.get!(Photo, photo.id).use_edited == false
+      assert has_element?(view, "#photo-#{photo.id}-original[aria-pressed='true']")
+      assert Drafts.get_draft!(draft.id).state == "photo_edits_drafted"
+    end
+
+    test "serves the edited photo and refuses a path outside the photo directory", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+      photo = hd(Drafts.get_draft!(draft.id).photos)
+
+      assert get(conn, ~p"/photos/#{photo}/edited").status == 404
+
+      assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+      conn = get(build_conn(), ~p"/photos/#{photo}/edited")
+      assert conn.status == 200
+      assert ["image/png" <> _] = get_resp_header(conn, "content-type")
+      assert conn.resp_body == "edited"
+
+      outside = Path.join(System.tmp_dir!(), "flipper-outside-#{photo.id}.png")
+      File.write!(outside, "nope")
+
+      photo
+      |> Ecto.Changeset.change(edited_path: outside)
+      |> Repo.update!()
+
+      assert get(build_conn(), ~p"/photos/#{photo}/edited").status == 404
     end
   end
 

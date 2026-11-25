@@ -4,6 +4,7 @@ defmodule Flipper.DraftsTest do
 
   alias Flipper.Drafts
   alias Flipper.Drafts.Draft
+  alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022&ReturnURL=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Fdrafts"
@@ -64,6 +65,7 @@ defmodule Flipper.DraftsTest do
     assert photo.position == 1
     assert photo.original_content_type == "image/jpeg"
     assert File.exists?(photo.original_path)
+    assert [_] = all_enqueued(worker: EditPhoto, args: %{photo_id: photo.id})
 
     assert [_] = all_enqueued(worker: FetchDraft, args: %{draft_id: draft.id})
     assert {:ok, again} = Drafts.paste_url(@url)
@@ -79,6 +81,7 @@ defmodule Flipper.DraftsTest do
     assert draft.title == "Bare item"
     assert draft.state == "awaiting_photos"
     assert draft.photos == []
+    assert [] = all_enqueued(worker: EditPhoto)
   end
 
   test "the last failed attempt records fetch_error and stays started" do

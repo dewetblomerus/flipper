@@ -6,7 +6,7 @@ defmodule FlipperWeb.DraftLive.Show do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} width="max-w-5xl">
       <.header>
         Draft {@draft.id}
         <:actions>
@@ -30,9 +30,64 @@ defmodule FlipperWeb.DraftLive.Show do
       </p>
       <p :if={@draft.fetch_error}>{@draft.fetch_error}</p>
 
-      <ul :if={@draft.photos != []} class="space-y-4">
-        <li :for={photo <- @draft.photos}>
-          <img src={~p"/photos/#{photo}"} alt={"Photo #{photo.position}"} class="w-full" />
+      <ul :if={@draft.photos != []} id="draft-photos" class="space-y-8">
+        <li :for={photo <- @draft.photos} id={"photo-#{photo.id}"} class="grid grid-cols-2 gap-4">
+          <%= if photo.edited_path do %>
+            <button
+              type="button"
+              id={"photo-#{photo.id}-original"}
+              phx-click="choose_edit"
+              phx-value-id={photo.id}
+              phx-value-use_edited="false"
+              aria-pressed={to_string(photo.use_edited == false)}
+              class={[
+                "rounded-xl border border-base-300 p-2 text-left transition hover:border-primary",
+                photo.use_edited == false && "ring-2 ring-primary"
+              ]}
+            >
+              <img
+                src={~p"/photos/#{photo}"}
+                alt={"Original #{photo.position}"}
+                class="aspect-square w-full rounded-lg bg-base-200 object-contain"
+              />
+              <span class="mt-2 block text-sm">Original</span>
+            </button>
+            <button
+              type="button"
+              id={"photo-#{photo.id}-edited"}
+              phx-click="choose_edit"
+              phx-value-id={photo.id}
+              phx-value-use_edited="true"
+              aria-pressed={to_string(photo.use_edited == true)}
+              class={[
+                "rounded-xl border border-base-300 p-2 text-left transition hover:border-primary",
+                photo.use_edited == true && "ring-2 ring-primary"
+              ]}
+            >
+              <img
+                src={~p"/photos/#{photo}/edited"}
+                alt={"Edited #{photo.position}"}
+                class="aspect-square w-full rounded-lg bg-base-200 object-contain"
+              />
+              <span class="mt-2 block text-sm">Edited</span>
+            </button>
+          <% else %>
+            <div id={"photo-#{photo.id}-original"}>
+              <img
+                src={~p"/photos/#{photo}"}
+                alt={"Original #{photo.position}"}
+                class="aspect-square w-full rounded-lg bg-base-200 object-contain"
+              />
+              <span class="mt-2 block text-sm">Original</span>
+            </div>
+            <div
+              id={"photo-#{photo.id}-edited"}
+              class="flex items-center justify-center gap-2 rounded-xl border border-dashed border-base-300"
+            >
+              <.icon name="hero-arrow-path" class="size-4 motion-safe:animate-spin" />
+              <span class="text-sm">Editing</span>
+            </div>
+          <% end %>
         </li>
       </ul>
     </Layouts.app>
@@ -71,7 +126,31 @@ defmodule FlipperWeb.DraftLive.Show do
   end
 
   @impl true
-  def handle_info({:draft_fetched, _id}, socket) do
+  def handle_event("choose_edit", %{"id" => id, "use_edited" => choice}, socket)
+      when choice in ["true", "false"] do
+    draft = socket.assigns.draft
+
+    case Enum.find(draft.photos, &(to_string(&1.id) == id)) do
+      nil -> {:noreply, put_flash(socket, :error, "Photo not found.")}
+      photo -> save_choice(socket, draft, photo, choice == "true")
+    end
+  end
+
+  defp save_choice(socket, draft, photo, use_edited) do
+    case Drafts.choose_edit(photo, use_edited) do
+      {:ok, _photo} ->
+        {:noreply, assign(socket, :draft, Drafts.get_draft!(draft.id))}
+
+      {:error, :not_edited} ->
+        {:noreply, put_flash(socket, :error, "That photo is still editing.")}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Could not save the choice.")}
+    end
+  end
+
+  @impl true
+  def handle_info({event, _id}, socket) when event in [:draft_fetched, :draft_changed] do
     {:noreply,
      socket
      |> assign(:refreshing, false)
