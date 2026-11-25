@@ -104,6 +104,7 @@ defmodule FlipperWeb.DraftLiveTest do
 
     test "refresh clears the fetch error and tries again", %{conn: conn} do
       {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=404")
+      assert {:ok, draft} = Drafts.transition(draft, :awaiting_photos)
       assert {:error, _} = perform_job(FetchDraft, %{draft_id: draft.id}, attempt: 3)
 
       Repo.update_all(
@@ -115,9 +116,15 @@ defmodule FlipperWeb.DraftLiveTest do
       assert html =~ "eBay did not return the draft"
 
       html = view |> element("#refresh-draft", "Refresh") |> render_click()
-      assert html =~ "Fetching title and photos."
       refute html =~ "eBay did not return the draft"
       assert [_] = all_enqueued(worker: FetchDraft, args: %{draft_id: draft.id})
+
+      _ = :sys.get_state(view.pid)
+      assert has_element?(view, "#draft-fetch-status")
+
+      assert {:error, _} = perform_job(FetchDraft, %{draft_id: draft.id}, attempt: 3)
+      _ = :sys.get_state(view.pid)
+      refute has_element?(view, "#draft-fetch-status")
     end
 
     test "serves a stored photo", %{conn: conn} do

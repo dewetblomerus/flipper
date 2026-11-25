@@ -163,7 +163,7 @@ defmodule Flipper.Drafts do
   def retry_ebay_photo(%Draft{}), do: {:error, :nothing_to_retry}
 
   def retry_failed do
-    Enum.each(failed_fetches(), &retry_fetch/1)
+    Enum.each(failed_fetches(), &refresh/1)
     Enum.each(failed_replacements(), &retry_ebay_photo/1)
   end
 
@@ -185,8 +185,11 @@ defmodule Flipper.Drafts do
     if has_photos?(draft) do
       {:ok, draft}
     else
-      with {:ok, draft} <- clear_fetch_error(draft) do
-        enqueue_fetch(draft)
+      result = Repo.transaction(fn -> clear_fetch_error_and_enqueue(draft) end)
+
+      with {:ok, draft} <- result do
+        broadcast_changed(draft.id)
+        {:ok, draft}
       end
     end
   end
@@ -278,9 +281,12 @@ defmodule Flipper.Drafts do
 
   defp clear_error_and_enqueue(photo) do
     Repo.transaction(fn ->
-      {:ok, photo} = update_photo(photo, ebay_error: nil)
-      insert_job(ReplaceEbayPhoto.new(%{photo_id: photo.id}))
-      photo
+      with {:ok, photo} <- update_photo(photo, ebay_error: nil),
+           :ok <- insert_job(ReplaceEbayPhoto.new(%{photo_id: photo.id}), :require_new) do
+        photo
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
     end)
   end
 
@@ -332,10 +338,16 @@ defmodule Flipper.Drafts do
     |> Repo.update()
   end
 
-  defp insert_job(changeset) do
+  defp insert_job(changeset, on_conflict \\ :allow_existing) do
     case Oban.insert(changeset) do
-      {:ok, _job} -> :ok
-      {:error, reason} -> Repo.rollback(reason)
+      {:ok, %Oban.Job{conflict?: true}} when on_conflict == :require_new ->
+        {:error, :job_already_queued}
+
+      {:ok, _job} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -374,7 +386,12 @@ defmodule Flipper.Drafts do
   end
 
   defp insert_edit_jobs(ids) do
-    Enum.each(ids, fn photo_id -> insert_job(EditPhoto.new(%{photo_id: photo_id})) end)
+    Enum.each(ids, fn photo_id ->
+      case insert_job(EditPhoto.new(%{photo_id: photo_id})) do
+        :ok -> :ok
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
   end
 
   defp write_edit(%Photo{edited_path: path}) when is_binary(path), do: :ok
@@ -478,11 +495,11 @@ defmodule Flipper.Drafts do
     |> Repo.insert()
     |> case do
       {:ok, draft} ->
-        enqueue_fetch(draft)
+        enqueue_fetch_if_needed(draft)
 
       {:error, changeset} ->
         if unique_ebay_draft_id?(changeset) do
-          enqueue_fetch(Repo.get_by!(Draft, ebay_draft_id: ebay_draft_id))
+          enqueue_fetch_if_needed(Repo.get_by!(Draft, ebay_draft_id: ebay_draft_id))
         else
           {:error, changeset}
         end
@@ -503,29 +520,29 @@ defmodule Flipper.Drafts do
     )
   end
 
-  defp retry_fetch(draft) do
-    with {:ok, draft} <- refresh(draft) do
-      broadcast_changed(draft.id)
-    end
-  end
-
   defp clear_fetch_error(draft) do
     draft
-    |> Ecto.Changeset.change(fetch_error: nil)
+    |> Ecto.Changeset.change()
+    |> Ecto.Changeset.force_change(:fetch_error, nil)
     |> Repo.update()
   end
 
-  defp enqueue_fetch(draft) do
-    if has_photos?(draft) do
-      {:ok, draft}
+  defp clear_fetch_error_and_enqueue(draft) do
+    with {:ok, draft} <- clear_fetch_error(draft),
+         {:ok, draft} <- enqueue_fetch(draft, :require_new) do
+      draft
     else
-      %{draft_id: draft.id}
-      |> FetchDraft.new()
-      |> Oban.insert()
-      |> case do
-        {:ok, _job} -> {:ok, draft}
-        {:error, reason} -> {:error, reason}
-      end
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp enqueue_fetch_if_needed(draft) do
+    if has_photos?(draft), do: {:ok, draft}, else: enqueue_fetch(draft)
+  end
+
+  defp enqueue_fetch(draft, on_conflict \\ :allow_existing) do
+    with :ok <- insert_job(FetchDraft.new(%{draft_id: draft.id}), on_conflict) do
+      {:ok, draft}
     end
   end
 

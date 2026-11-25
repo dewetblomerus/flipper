@@ -74,7 +74,13 @@ defmodule Flipper.ReplaceEbayPhotoTest do
     assert photo.edited_ebay_url == @new_url
     assert photo.replaced_on_ebay_at == nil
 
+    # perform_job/3 calls the worker without changing the stored job's state.
+    assert [job] = all_enqueued(worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
+    job |> Ecto.Changeset.change(state: "discarded") |> Repo.update!()
+
     assert {:ok, %Photo{ebay_error: nil}} = Drafts.retry_ebay_photo(Drafts.get_draft!(draft.id))
+    assert [retry] = all_enqueued(worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
+    refute retry.id == job.id
   end
 
   defp edited_draft(ebay_draft_id) do

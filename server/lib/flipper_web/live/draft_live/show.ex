@@ -28,7 +28,10 @@ defmodule FlipperWeb.DraftLive.Show do
         <:item title="State">{@draft.state}</:item>
       </.list>
 
-      <p :if={@refreshing or (@draft.state == "started" and is_nil(@draft.fetch_error))}>
+      <p
+        :if={@refreshing or (@draft.state == "started" and is_nil(@draft.fetch_error))}
+        id="draft-fetch-status"
+      >
         Fetching title and photos.
       </p>
       <p :if={@draft.fetch_error}>{@draft.fetch_error}</p>
@@ -226,7 +229,11 @@ defmodule FlipperWeb.DraftLive.Show do
   end
 
   @impl true
-  def handle_info({event, _id}, socket) when event in [:draft_fetched, :draft_changed] do
+  def handle_info({:draft_changed, _id}, socket) do
+    {:noreply, assign(socket, :draft, Drafts.get_draft!(socket.assigns.draft.id))}
+  end
+
+  def handle_info({:draft_fetched, _id}, socket) do
     {:noreply,
      socket
      |> assign(:refreshing, false)

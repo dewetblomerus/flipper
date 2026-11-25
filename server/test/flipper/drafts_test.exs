@@ -105,9 +105,27 @@ defmodule Flipper.DraftsTest do
     discard_available_jobs()
     assert [] = all_enqueued(worker: FetchDraft, args: %{draft_id: draft.id})
 
+    id = draft.id
+    Phoenix.PubSub.subscribe(Flipper.PubSub, "draft:#{id}")
+
     assert {:ok, draft} = Drafts.refresh(draft)
     assert draft.fetch_error == nil
-    assert [_] = all_enqueued(worker: FetchDraft, args: %{draft_id: draft.id})
+    assert Repo.get!(Draft, id).fetch_error == nil
+    assert [_] = all_enqueued(worker: FetchDraft, args: %{draft_id: id})
+    assert_received {:draft_changed, ^id}
+  end
+
+  test "refresh preserves fetch_error when a fetch is already queued" do
+    assert {:ok, %{id: id}} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=404")
+    assert {:error, _} = perform_job(FetchDraft, %{draft_id: id}, attempt: 3)
+    assert [job] = all_enqueued(worker: FetchDraft, args: %{draft_id: id})
+    draft = Repo.get!(Draft, id)
+    Phoenix.PubSub.subscribe(Flipper.PubSub, "draft:#{id}")
+
+    assert {:error, :job_already_queued} = Drafts.refresh(draft)
+    assert Repo.get!(Draft, id).fetch_error == draft.fetch_error
+    assert [^job] = all_enqueued(worker: FetchDraft, args: %{draft_id: id})
+    refute_received {:draft_changed, ^id}
   end
 
   test "refresh does nothing when the draft has photos" do
@@ -132,9 +150,18 @@ defmodule Flipper.DraftsTest do
     assert {:ok, photo} = Drafts.choose_edit(Drafts.get_photo!(photo.id), true)
     assert {:error, _} = perform_job(ReplaceEbayPhoto, %{photo_id: photo.id}, attempt: 3)
 
+    Phoenix.PubSub.subscribe(Flipper.PubSub, "draft:#{unread.id}")
+    Phoenix.PubSub.subscribe(Flipper.PubSub, "draft:#{unreplaced.id}")
+    fetch_error = Repo.get!(Draft, unread.id).fetch_error
+    ebay_error = Drafts.get_photo!(photo.id).ebay_error
+
+    assert :ok = Drafts.retry_failed()
+    assert Repo.get!(Draft, unread.id).fetch_error == fetch_error
+    assert Drafts.get_photo!(photo.id).ebay_error == ebay_error
+    refute_received {:draft_changed, _}
+
     assert {:ok, _healthy} = Drafts.paste_url(@url)
     discard_available_jobs()
-    Phoenix.PubSub.subscribe(Flipper.PubSub, "draft:#{unread.id}")
 
     assert :ok = Drafts.retry_failed()
 
