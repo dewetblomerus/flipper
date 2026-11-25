@@ -42,7 +42,7 @@ defmodule FlipperWeb.DraftLive.Index do
      |> stream(:drafts, list_drafts())}
   end
 
-  defp list_drafts() do
+  defp list_drafts do
     Drafts.list_drafts()
   end
 end

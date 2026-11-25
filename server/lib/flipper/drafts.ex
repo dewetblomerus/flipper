@@ -1,4 +1,8 @@
 defmodule Flipper.Drafts do
+  @moduledoc """
+  Lists drafts and creates one from a pasted eBay draft URL.
+  """
+
   import Ecto.Query
 
   alias Flipper.Drafts.Draft
@@ -69,13 +73,16 @@ defmodule Flipper.Drafts do
   end
 
   defp draft_id_param(query) do
-    Enum.find_value(["draft_id", "draftId"], fn key ->
-      case query[key] do
-        id when is_binary(id) -> if id =~ ~r/^\d+$/, do: id
-        _ -> nil
-      end
-    end)
+    ["draft_id", "draftId"]
+    |> Enum.map(&Map.get(query, &1))
+    |> Enum.find_value(&digit_id/1)
   end
+
+  defp digit_id(id) when is_binary(id) do
+    if id =~ ~r/^\d+$/, do: id
+  end
+
+  defp digit_id(_id), do: nil
 
   defp url_changeset(url) do
     {%{}, %{url: :string}}
