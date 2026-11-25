@@ -3,6 +3,8 @@ defmodule Flipper.Ebay.SellerHub.Client do
   Reads a Seller Hub draft page with the browser cookie.
   """
 
+  alias Flipper.Ebay.Session
+
   @image_types ~w(image/jpeg image/png image/gif image/webp image/avif image/heic)
   @drafts_url "https://www.ebay.com/sh/lst/drafts"
   @user_agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36"
@@ -24,12 +26,20 @@ defmodule Flipper.Ebay.SellerHub.Client do
   ]
 
   def fetch(ebay_draft_id, opts \\ []) when is_binary(ebay_draft_id) do
-    case Keyword.get(opts, :cookie, Application.get_env(:flipper, :ebay_cookie)) do
+    case cookie_from(opts) do
       cookie when is_binary(cookie) and cookie != "" ->
         request(ebay_draft_id, cookie, Keyword.delete(opts, :cookie))
 
       _ ->
-        {:error, "EBAY_COOKIE is not set"}
+        {:error, "eBay cookie is not set"}
+    end
+  end
+
+  defp cookie_from(opts) do
+    if Keyword.has_key?(opts, :cookie) do
+      opts[:cookie]
+    else
+      Session.cookie()
     end
   end
 

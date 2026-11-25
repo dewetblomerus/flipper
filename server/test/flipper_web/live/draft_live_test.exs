@@ -6,6 +6,7 @@ defmodule FlipperWeb.DraftLiveTest do
   import Phoenix.LiveViewTest
 
   alias Flipper.Drafts
+  alias Flipper.Drafts.Photo
   alias Flipper.Repo
   alias Flipper.Workers.FetchDraft
 
@@ -18,6 +19,20 @@ defmodule FlipperWeb.DraftLiveTest do
 
       assert html =~ "Listing Drafts"
       assert html =~ draft.ebay_draft_id
+      assert html =~ "max-w-4xl"
+      refute html =~ "/photos/"
+    end
+
+    test "shows the first photo before the draft id", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      later = insert_photo(draft, 2)
+      first = insert_photo(draft, 1)
+
+      {:ok, _index_live, html} = live(conn, ~p"/")
+
+      assert html =~ ~s(src="#{~p"/photos/#{first}"}")
+      refute html =~ ~s(src="#{~p"/photos/#{later}"}")
+      assert html =~ ~r/src="#{Regex.escape(~p"/photos/#{first}")}"[\s\S]*#{draft.ebay_draft_id}/
     end
 
     test "pasting a draft URL opens the draft, and pasting it again opens the same draft", %{
@@ -25,11 +40,14 @@ defmodule FlipperWeb.DraftLiveTest do
     } do
       {:ok, index_live, _html} = live(conn, ~p"/drafts")
 
-      assert {:ok, form_live, _} =
+      assert {:ok, form_live, form_html} =
                index_live
                |> element("a", "Paste a URL")
                |> render_click()
                |> follow_redirect(conn, ~p"/drafts/new")
+
+      assert form_html =~ "max-w-2xl"
+      refute form_html =~ "max-w-4xl"
 
       assert form_live
              |> form("#draft-form", draft: %{url: "https://example.com/lstng?draft_id=123"})
@@ -75,6 +93,8 @@ defmodule FlipperWeb.DraftLiveTest do
       assert html =~ "Draft #{draft.id}"
       assert html =~ draft.ebay_draft_id
       assert html =~ "started"
+      assert html =~ "max-w-2xl"
+      refute html =~ "max-w-4xl"
       assert html =~ "Fetching title and photos."
       assert html =~ "Refresh"
     end
@@ -120,5 +140,16 @@ defmodule FlipperWeb.DraftLiveTest do
       assert html =~ "/photos/"
       refute html =~ "Refresh"
     end
+  end
+
+  defp insert_photo(draft, position) do
+    %Photo{}
+    |> Photo.changeset(%{
+      draft_id: draft.id,
+      position: position,
+      original_path: "/tmp/flipper-index-#{draft.id}-#{position}.jpg",
+      original_content_type: "image/jpeg"
+    })
+    |> Repo.insert!()
   end
 end

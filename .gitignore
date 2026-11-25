@@ -37,3 +37,6 @@ server/assets/node_modules/
 
 # Draft photos downloaded from eBay.
 server/uploads/
+
+# Saved eBay session cookie.
+server/ebay_cookie
