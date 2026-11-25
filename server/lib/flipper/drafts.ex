@@ -167,6 +167,11 @@ defmodule Flipper.Drafts do
 
   def retry_ebay_photo(%Draft{}), do: {:error, :nothing_to_retry}
 
+  def retry_failed do
+    Enum.each(failed_fetches(), &retry_fetch/1)
+    Enum.each(failed_replacements(), &retry_ebay_photo/1)
+  end
+
   def fetch_from_ebay(%Draft{} = draft) do
     if has_photos?(draft) do
       :ok
@@ -479,6 +484,25 @@ defmodule Flipper.Drafts do
           {:error, changeset}
         end
     end
+  end
+
+  defp failed_fetches do
+    Repo.all(from d in Draft, where: not is_nil(d.fetch_error), order_by: d.id)
+  end
+
+  defp failed_replacements do
+    Repo.all(
+      from d in Draft,
+        join: p in assoc(d, :photos),
+        where: not is_nil(p.ebay_error),
+        distinct: true,
+        order_by: d.id
+    )
+  end
+
+  defp retry_fetch(draft) do
+    {:ok, draft} = refresh(draft)
+    broadcast_changed(draft.id)
   end
 
   defp clear_fetch_error(draft) do

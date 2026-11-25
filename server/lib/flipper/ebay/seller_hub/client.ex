@@ -278,6 +278,7 @@ defmodule Flipper.Ebay.SellerHub.Client do
 
     cond do
       sign_in?(next) ->
+        Session.reject(cookie)
         {:error, "eBay session is not signed in"}
 
       challenge?(next) ->

@@ -2,7 +2,9 @@
 
 A person pastes an eBay draft URL. Flipper reads `draft_id` or `draftId` from the query string and creates one draft in `started`. The stored value is `drafts.ebay_draft_id`.
 
-The drafts index asks for the eBay cookie and saves it. An Oban job then reads that Seller Hub draft with the saved cookie. It stores the title and downloads every photo. Saved photos move the draft to `photos_taken`. A draft with no photos moves to `awaiting_photos`. Refresh on `/drafts/:id` reads the Seller Hub draft again when the draft has no photos.
+While no eBay cookie is saved, or after eBay redirects it to sign-in, a popover blocks every page and asks for one. Saving it enqueues a job for each failed read and photo replacement.
+
+An Oban job then reads that Seller Hub draft with the saved cookie. It stores the title and downloads every photo. Saved photos move the draft to `photos_taken`. A draft with no photos moves to `awaiting_photos`. Refresh on `/drafts/:id` reads the Seller Hub draft again when the draft has no photos.
 
 `photos_taken` starts one edit job for the first photo. The job finds the subject, turns the photo to square its straight edges, and crops it with a margin. The background stays. It stores the edited file, the subject box, and the angle. Later photos are not cropped. When the first photo has an edit, the draft moves to `photo_edits_drafted`. `/drafts/:id` shows the title, the first photo's original beside its edit, and the later photos unchanged. Until that job finishes, the edit side shows Editing. Redo edit clears the first photo's edit and runs the job again. The draft returns to `photos_taken` until it finishes.
 

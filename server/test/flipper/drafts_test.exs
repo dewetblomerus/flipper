@@ -6,6 +6,7 @@ defmodule Flipper.DraftsTest do
   alias Flipper.Drafts.Draft
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
+  alias Flipper.Workers.ReplaceEbayPhoto
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022&ReturnURL=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Fdrafts"
 
@@ -118,6 +119,31 @@ defmodule Flipper.DraftsTest do
     assert {:ok, refreshed} = Drafts.refresh(draft)
     assert refreshed.state == "photos_taken"
     assert [] = all_enqueued(worker: FetchDraft, args: %{draft_id: draft.id})
+  end
+
+  test "retry_failed enqueues an eBay job for each failed read and photo replacement" do
+    assert {:ok, unread} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=404")
+    assert {:error, _} = perform_job(FetchDraft, %{draft_id: unread.id}, attempt: 3)
+
+    assert {:ok, unreplaced} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=500")
+    assert :ok = perform_job(FetchDraft, %{draft_id: unreplaced.id})
+    [photo] = Drafts.get_draft!(unreplaced.id).photos
+    assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+    assert {:ok, photo} = Drafts.choose_edit(Drafts.get_photo!(photo.id), true)
+    assert {:error, _} = perform_job(ReplaceEbayPhoto, %{photo_id: photo.id}, attempt: 3)
+
+    assert {:ok, _healthy} = Drafts.paste_url(@url)
+    discard_available_jobs()
+    Phoenix.PubSub.subscribe(Flipper.PubSub, "draft:#{unread.id}")
+
+    assert :ok = Drafts.retry_failed()
+
+    assert [_, _] = all_enqueued(queue: :ebay)
+    assert_enqueued(queue: :ebay, worker: FetchDraft, args: %{draft_id: unread.id})
+    assert_enqueued(queue: :ebay, worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
+    assert Repo.get!(Draft, unread.id).fetch_error == nil
+    assert Drafts.get_photo!(photo.id).ebay_error == nil
+    assert_received {:draft_changed, _}
   end
 
   defp discard_available_jobs do

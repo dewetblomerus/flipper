@@ -4,7 +4,7 @@ defmodule Flipper.Workers.ReplaceEbayPhoto do
   """
 
   use Oban.Worker,
-    queue: :drafts,
+    queue: :ebay,
     max_attempts: 3,
     unique: [
       period: :infinity,
