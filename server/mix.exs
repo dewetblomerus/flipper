@@ -27,7 +27,7 @@ defmodule Flipper.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [precommit: :test, "precommit.ci": :test, credo: :test]
     ]
   end
 
@@ -73,7 +73,8 @@ defmodule Flipper.MixProject do
       {:jason, "~> 1.2"},
       {:oban, "~> 2.24"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -96,7 +97,22 @@ defmodule Flipper.MixProject do
         "esbuild flipper --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: [
+        "hex.audit",
+        "compile --warnings-as-errors",
+        "deps.unlock --unused",
+        "format",
+        "credo --strict",
+        "test"
+      ],
+      "precommit.ci": [
+        "hex.audit",
+        "compile --warnings-as-errors",
+        "deps.unlock --check-unused",
+        "format --check-formatted",
+        "credo --strict",
+        "test"
+      ]
     ]
   end
 end
