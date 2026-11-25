@@ -21,3 +21,4 @@ New states can be inserted between existing ones later by adding a transition. A
 
 - [Stack](docs/stack.md)
 - [Design notes](docs/design.md)
+- [Entity relationship diagram](docs/erd.md)
