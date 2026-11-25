@@ -1,4 +1,4 @@
-defmodule Flipper.Photos.Rembg do
+defmodule Flipper.Photos.GroundingDino do
   @moduledoc """
   Finds the product box with local Grounding DINO and crops the original.
   """
