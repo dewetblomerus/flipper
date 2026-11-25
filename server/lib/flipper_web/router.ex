@@ -17,9 +17,10 @@ defmodule FlipperWeb.Router do
   scope "/", FlipperWeb do
     pipe_through :browser
 
-    live "/", DraftLive, :new
-    live "/drafts", DraftLive, :index
-    live "/drafts/:id", DraftLive, :show
+    live "/", DraftLive.Index, :index
+    live "/drafts", DraftLive.Index, :index
+    live "/drafts/new", DraftLive.Form, :new
+    live "/drafts/:id", DraftLive.Show, :show
   end
 
   # Other scopes may use custom stacks.

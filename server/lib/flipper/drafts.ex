@@ -17,6 +17,19 @@ defmodule Flipper.Drafts do
     end
   end
 
+  def change_url(url) when is_binary(url) do
+    url = String.trim(url)
+
+    case ebay_draft_id(url) do
+      {:ok, _ebay_draft_id} ->
+        {%{}, %{url: :string}}
+        |> Ecto.Changeset.cast(%{"url" => url}, [:url])
+
+      :error ->
+        url_changeset(url)
+    end
+  end
+
   defp insert_draft(ebay_draft_id) do
     %Draft{}
     |> Draft.create_changeset(ebay_draft_id)

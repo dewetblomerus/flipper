@@ -6,7 +6,7 @@ That value is the Seller Hub draft. eBay assigns the published listing id when t
 
 Pasting an id that already exists opens that draft.
 
-`/drafts` lists the drafts. `/drafts/:id` opens one.
+`/drafts` lists the drafts. `/drafts/new` pastes a URL. `/drafts/:id` opens one.
 
 # To-do
 

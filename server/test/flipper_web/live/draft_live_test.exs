@@ -7,48 +7,70 @@ defmodule FlipperWeb.DraftLiveTest do
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022"
 
-  test "lists drafts and opens one", %{conn: conn} do
-    {:ok, _view, html} = live(conn, ~p"/drafts")
-    assert html =~ "No drafts yet."
+  describe "Index" do
+    test "lists drafts", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      {:ok, _index_live, html} = live(conn, ~p"/drafts")
 
-    {:ok, draft} = Drafts.paste_url(@url)
+      assert html =~ "Listing Drafts"
+      assert html =~ draft.ebay_draft_id
+    end
 
-    {:ok, view, html} = live(conn, ~p"/drafts")
-    assert html =~ draft.ebay_draft_id
-    refute html =~ "No drafts yet."
+    test "pasting a draft URL opens the draft, and pasting it again opens the same draft", %{
+      conn: conn
+    } do
+      {:ok, index_live, _html} = live(conn, ~p"/drafts")
 
-    assert {:ok, _show, html} =
-             view
-             |> element("#draft-#{draft.id}")
-             |> render_click()
-             |> follow_redirect(conn, ~p"/drafts/#{draft}")
+      assert {:ok, form_live, _} =
+               index_live
+               |> element("a", "Paste a URL")
+               |> render_click()
+               |> follow_redirect(conn, ~p"/drafts/new")
 
-    assert html =~ ~s(id="draft-id">#{draft.id}<)
+      assert form_live
+             |> form("#draft-form", draft: %{url: "https://example.com/lstng?draft_id=123"})
+             |> render_change() =~ "is not an eBay draft URL"
+
+      submit =
+        form_live
+        |> form("#draft-form", draft: %{url: @url})
+        |> render_submit()
+
+      assert {:error, {:live_redirect, %{to: path}}} = submit
+      assert {:ok, show_live, html} = follow_redirect(submit, conn, path)
+      assert html =~ "5345502780022"
+      assert html =~ "started"
+
+      assert {:ok, index_live, _html} =
+               show_live
+               |> element("a[href='/drafts']")
+               |> render_click()
+               |> follow_redirect(conn, ~p"/drafts")
+
+      assert {:ok, form_live, _} =
+               index_live
+               |> element("a", "Paste a URL")
+               |> render_click()
+               |> follow_redirect(conn, ~p"/drafts/new")
+
+      assert {:ok, _show_live, html} =
+               form_live
+               |> form("#draft-form", draft: %{url: @url})
+               |> render_submit()
+               |> follow_redirect(conn, path)
+
+      assert html =~ "5345502780022"
+    end
   end
 
-  test "pasting a draft URL opens the draft, and pasting it again opens the same draft", %{
-    conn: conn
-  } do
-    {:ok, view, _html} = live(conn, ~p"/")
+  describe "Show" do
+    test "displays draft", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      {:ok, _show_live, html} = live(conn, ~p"/drafts/#{draft}")
 
-    assert {:ok, _show, html} =
-             view
-             |> form("#draft-form", draft: %{url: @url})
-             |> render_submit()
-             |> follow_redirect(conn)
-
-    assert html =~ "5345502780022"
-    assert html =~ "started"
-    [_, id] = Regex.run(~r/id="draft-id">(\d+)/, html)
-
-    {:ok, view, _html} = live(conn, ~p"/")
-
-    assert {:ok, _show, html} =
-             view
-             |> form("#draft-form", draft: %{url: @url})
-             |> render_submit()
-             |> follow_redirect(conn, ~p"/drafts/#{id}")
-
-    assert html =~ ~s(id="draft-id">#{id}<)
+      assert html =~ "Draft #{draft.id}"
+      assert html =~ draft.ebay_draft_id
+      assert html =~ draft.state
+    end
   end
 end
