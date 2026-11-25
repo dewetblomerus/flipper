@@ -9,7 +9,13 @@ import Config
 
 config :flipper,
   ecto_repos: [Flipper.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  photo_dir: Path.expand("../uploads", __DIR__)
+
+config :flipper, Oban,
+  repo: Flipper.Repo,
+  queues: [drafts: 2],
+  plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
 
 # Configure the endpoint
 config :flipper, FlipperWeb.Endpoint,

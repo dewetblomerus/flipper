@@ -22,6 +22,7 @@ erDiagram
         string ebay_draft_id UK "not null"
         string title
         string state "not null"
+        string fetch_error
         datetime inserted_at
         datetime updated_at
     }
@@ -46,8 +47,9 @@ erDiagram
 ## Notes
 
 - Primary keys are `bigint`. Timestamps are UTC instants (`utc_datetime_usec`).
-- `drafts.state` is the current state name: `started`, `photos_taken`, `photo_edits_drafted`, `photo_edits_approved`. Allowed moves live in code. A transition adds a state name or returns to an earlier one. Drafts already past that point stay where they are.
-- A draft may exist in `started` with no photos. `title` may be empty until the item is named.
+- `drafts.state` is the current state name: `started`, `awaiting_photos`, `photos_taken`, `photo_edits_drafted`, `photo_edits_approved`. Allowed moves live in code. A transition adds a state name or returns to an earlier one. Drafts already past that point stay where they are.
+- A draft in `started` has not been read from eBay yet. `awaiting_photos` means it was read and it has no photos. `title` may be empty.
+- `drafts.fetch_error` is the last failed read of the Seller Hub draft. A successful read clears it.
 - `drafts.ebay_draft_id` is the Seller Hub `draft_id` from a pasted eBay draft URL. It is unique. See [Drafts](drafts.md).
 - `photos.position` is unique per draft. Deleting a draft deletes its photos.
 - `original_path` and `edited_path` are disk paths. The original is never replaced. The edit job writes `edited_path` and `edited_content_type`. A rework overwrites the edit in place.

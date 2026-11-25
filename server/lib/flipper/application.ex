@@ -10,6 +10,7 @@ defmodule Flipper.Application do
     children = [
       FlipperWeb.Telemetry,
       Flipper.Repo,
+      {Oban, Application.fetch_env!(:flipper, Oban)},
       {DNSCluster, query: Application.get_env(:flipper, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Flipper.PubSub},
       # Start a worker by calling: Flipper.Worker.start_link(arg)

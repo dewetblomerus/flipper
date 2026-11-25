@@ -6,6 +6,8 @@ defmodule Flipper.Drafts.Draft do
     field :ebay_draft_id, :string
     field :title, :string
     field :state, :string
+    field :fetch_error, :string
+    has_many :photos, Flipper.Drafts.Photo
 
     timestamps(type: :utc_datetime_usec)
   end

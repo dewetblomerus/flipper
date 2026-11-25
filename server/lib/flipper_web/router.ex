@@ -17,6 +17,7 @@ defmodule FlipperWeb.Router do
   scope "/", FlipperWeb do
     pipe_through :browser
 
+    get "/photos/:id", PhotoController, :show
     live "/", DraftLive.Index, :index
     live "/drafts", DraftLive.Index, :index
     live "/drafts/new", DraftLive.Form, :new

@@ -1,9 +1,13 @@
 defmodule FlipperWeb.DraftLiveTest do
   use FlipperWeb.ConnCase, async: true
+  use Oban.Testing, repo: Flipper.Repo
 
+  import Ecto.Query
   import Phoenix.LiveViewTest
 
   alias Flipper.Drafts
+  alias Flipper.Repo
+  alias Flipper.Workers.FetchDraft
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022"
 
@@ -70,7 +74,51 @@ defmodule FlipperWeb.DraftLiveTest do
 
       assert html =~ "Draft #{draft.id}"
       assert html =~ draft.ebay_draft_id
-      assert html =~ draft.state
+      assert html =~ "started"
+      assert html =~ "Fetching title and photos."
+      assert html =~ "Refresh"
+    end
+
+    test "refresh clears the fetch error and tries again", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=404")
+      assert {:error, _} = perform_job(FetchDraft, %{draft_id: draft.id}, attempt: 3)
+
+      Repo.update_all(
+        from(j in Oban.Job, where: j.state == "available"),
+        set: [state: "discarded"]
+      )
+
+      {:ok, view, html} = live(conn, ~p"/drafts/#{draft}")
+      assert html =~ "eBay did not return the draft"
+
+      html = view |> element("#refresh-draft", "Refresh") |> render_click()
+      assert html =~ "Fetching title and photos."
+      refute html =~ "eBay did not return the draft"
+      assert [_] = all_enqueued(worker: FetchDraft, args: %{draft_id: draft.id})
+    end
+
+    test "serves a stored photo", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+
+      photo = hd(Drafts.get_draft!(draft.id).photos)
+      conn = get(conn, ~p"/photos/#{photo}")
+
+      assert conn.status == 200
+      assert ["image/jpeg" <> _] = get_resp_header(conn, "content-type")
+    end
+
+    test "shows the title and photos when the fetch finishes", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+
+      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+
+      html = render(view)
+      assert html =~ "Vintage lamp"
+      assert html =~ "photos_taken"
+      assert html =~ "/photos/"
+      refute html =~ "Refresh"
     end
   end
 end

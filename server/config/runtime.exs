@@ -23,6 +23,8 @@ end
 config :flipper, FlipperWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+config :flipper, :ebay_cookie, System.get_env("EBAY_COOKIE")
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :flipper, FlipperWeb.Endpoint,
