@@ -16,6 +16,7 @@ from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 MODEL_ID = "IDEA-Research/grounding-dino-base"
 MIN_TILT = 1
 MAX_TILT = 20
+MARGIN = 0.05
 
 _processor = None
 _model = None
@@ -28,12 +29,13 @@ def main() -> None:
     text = phrase(sys.argv[3])
     box = product_box(image, text)
     angle = tilt(image, box)
+    box = with_margin(box, image.size, margin(box))
 
     if angle:
         turned = image.rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor="white")
-        turned_box = product_box(turned, text)
+        turned_box = fitted(product_box(turned, text), turned.size, image.size, angle)
 
-        if inside_photo(image.size, angle, turned_box):
+        if turned_box:
             image, box = turned, turned_box
         else:
             angle = 0.0
@@ -133,10 +135,34 @@ def tilt(image, box):
     return round(angle, 1) if MIN_TILT <= abs(angle) <= MAX_TILT else 0.0
 
 
-def inside_photo(size, angle, box):
-    """True when at most 1% of the turned crop is fill from outside the original."""
+def margin(box):
+    _left, _top, width, height = box
+    return round(MARGIN * (width + height) / 2)
+
+
+def with_margin(box, size, pad):
     left, top, width, height = box
-    mask = Image.new("L", size, 255).rotate(angle, expand=True, fillcolor=0)
+    x0, y0 = max(left - pad, 0), max(top - pad, 0)
+    x1, y1 = min(left + width + pad, size[0]), min(top + height + pad, size[1])
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def fitted(box, size, original, angle):
+    """The turned crop with the widest margin, up to MARGIN, that stays inside the original."""
+    mask = Image.new("L", original, 255).rotate(angle, expand=True, fillcolor=0)
+
+    for pad in range(margin(box), -1, -1):
+        grown = with_margin(box, size, pad)
+
+        if inside_photo(mask, grown):
+            return grown
+
+    return None
+
+
+def inside_photo(mask, box):
+    """True when at most 1% of the crop is fill from outside the original."""
+    left, top, width, height = box
     fill = mask.crop((left, top, left + width, top + height)).histogram()[0]
     return fill <= width * height / 100
 

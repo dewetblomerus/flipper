@@ -56,7 +56,7 @@ erDiagram
 - `photos.position` is unique per draft. Deleting a draft deletes its photos.
 - `original_path` and `edited_path` are disk paths. The original is never replaced. The edit job turns that original by `subject_angle`, crops it to the subject box, and writes `edited_path` and `edited_content_type`. The background stays. A rework overwrites the edit in place.
 - `subject_angle` is degrees counterclockwise, as Pillow turns, with the canvas grown to fit. 0 leaves the photo as taken.
-- The subject box is `subject_left`, `subject_top`, `subject_width`, and `subject_height`, in pixels of the turned original. Width and height count pixels. The box and `subject_angle` are all null, or all present with width and height greater than zero. A check constraint enforces that. The crop reuses this angle and box.
+- The subject box is `subject_left`, `subject_top`, `subject_width`, and `subject_height`, in pixels of the turned original. It holds the subject plus its margin. Width and height count pixels. The box and `subject_angle` are all null, or all present with width and height greater than zero. A check constraint enforces that. The crop reuses this angle and box.
 - `photos.use_edited` is true when the person picks the edit and false when they pick the original. It stays null until they choose.
 - An approved draft uses `edited_path` when it is present.
 - Reaching `photos_taken` enqueues one Oban edit job for the first photo. Later photos are not cropped. The draft moves to `photo_edits_drafted` when that photo has an edit.
