@@ -37,6 +37,7 @@ defmodule Flipper.EditPhotoTest do
     assert edited.subject_top == 2
     assert edited.subject_width == 3
     assert edited.subject_height == 4
+    assert edited.subject_angle == -5.5
     assert String.ends_with?(edited.edited_path, "/1-edited.png")
     assert File.read!(edited.edited_path) == "edited"
     assert edited.use_edited == nil
@@ -58,7 +59,8 @@ defmodule Flipper.EditPhotoTest do
       subject_left: 0,
       subject_top: 0,
       subject_width: 1,
-      subject_height: 1
+      subject_height: 1,
+      subject_angle: 0.0
     })
     |> Repo.update!()
 
@@ -81,6 +83,7 @@ defmodule Flipper.EditPhotoTest do
     draft = Drafts.get_draft!(draft.id)
     assert draft.state == "photos_taken"
     assert Enum.all?(draft.photos, &is_nil(&1.edited_path))
+    assert Enum.all?(draft.photos, &is_nil(&1.subject_angle))
     assert [_] = all_enqueued(worker: EditPhoto, args: %{photo_id: first.id})
     assert [] = all_enqueued(worker: EditPhoto, args: %{photo_id: second.id})
 

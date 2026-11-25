@@ -1,6 +1,6 @@
 defmodule Flipper.Photos.GroundingDino do
   @moduledoc """
-  Finds the product box with local Grounding DINO and crops the original.
+  Finds the product box with local Grounding DINO, straightens it, and crops the original.
   """
 
   @behaviour Flipper.Photos.Editor
@@ -21,9 +21,19 @@ defmodule Flipper.Photos.GroundingDino do
     json = out |> String.split("\n", trim: true) |> List.last()
 
     case Jason.decode(json || "") do
-      {:ok, %{"left" => left, "top" => top, "width" => width, "height" => height}}
-      when is_integer(left) and is_integer(top) and is_integer(width) and is_integer(height) ->
-        {:ok, %{left: left, top: top, width: width, height: height, content_type: "image/png"}}
+      {:ok,
+       %{"left" => left, "top" => top, "width" => width, "height" => height, "angle" => angle}}
+      when is_integer(left) and is_integer(top) and is_integer(width) and is_integer(height) and
+             is_number(angle) ->
+        {:ok,
+         %{
+           left: left,
+           top: top,
+           width: width,
+           height: height,
+           angle: angle / 1,
+           content_type: "image/png"
+         }}
 
       _ ->
         {:error, "photo edit returned #{String.trim(out)}"}

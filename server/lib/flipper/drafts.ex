@@ -258,7 +258,8 @@ defmodule Flipper.Drafts do
       subject_left: nil,
       subject_top: nil,
       subject_width: nil,
-      subject_height: nil
+      subject_height: nil,
+      subject_angle: nil
     })
     |> Repo.update!()
   end
@@ -293,7 +294,8 @@ defmodule Flipper.Drafts do
         subject_left: box.left,
         subject_top: box.top,
         subject_width: box.width,
-        subject_height: box.height
+        subject_height: box.height,
+        subject_angle: box.angle
       })
       |> Repo.update()
       |> case do

@@ -13,6 +13,7 @@ defmodule Flipper.Drafts.Photo do
     field :subject_top, :integer
     field :subject_width, :integer
     field :subject_height, :integer
+    field :subject_angle, :float
     field :use_edited, :boolean
 
     timestamps(type: :utc_datetime_usec)
@@ -33,7 +34,8 @@ defmodule Flipper.Drafts.Photo do
       :subject_left,
       :subject_top,
       :subject_width,
-      :subject_height
+      :subject_height,
+      :subject_angle
     ])
     |> validate_required([
       :edited_path,
@@ -41,7 +43,8 @@ defmodule Flipper.Drafts.Photo do
       :subject_left,
       :subject_top,
       :subject_width,
-      :subject_height
+      :subject_height,
+      :subject_angle
     ])
     |> validate_number(:subject_left, greater_than_or_equal_to: 0)
     |> validate_number(:subject_top, greater_than_or_equal_to: 0)
