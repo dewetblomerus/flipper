@@ -12,10 +12,10 @@ An approval step sits between the processed photo and any call to the eBay API. 
 
 1. `start`
 2. `photos_taken` — raw photos are available
-3. `photos_resized` — background removed and cropped (automated)
-4. `photos_approved` — manual review complete; later transitions may call eBay
+3. `photo_edits_drafted` — automatic edits are ready for review
+4. `photo_edits_approved` — review complete; later transitions may call eBay
 
-New states can be inserted between existing ones later by adding a transition. Already-processed listings are unaffected.
+The current state is a name, not a progress number. A later transition can add a name or return to an earlier one, such as `photo_edits_denied` back to `photo_edits_drafted`. Listings already further along stay where they are.
 
 ## Docs
 

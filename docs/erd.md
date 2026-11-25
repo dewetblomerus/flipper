@@ -11,7 +11,7 @@ erDiagram
     listings ||--o{ photos : has
 
     users {
-        uuid id PK
+        bigint id PK
         string auth0_sub UK "not null"
         string email UK "not null"
         string display_name
@@ -20,7 +20,7 @@ erDiagram
     }
 
     listings {
-        uuid id PK
+        bigint id PK
         string title
         string state "not null"
         datetime inserted_at
@@ -28,13 +28,13 @@ erDiagram
     }
 
     photos {
-        uuid id PK
-        uuid listing_id FK "not null"
+        bigint id PK
+        bigint listing_id FK "not null"
         integer position "not null"
-        string original_key "not null"
+        string original_path "not null"
         string original_content_type "not null"
-        string processed_key
-        string processed_content_type
+        string edited_path
+        string edited_content_type
         integer subject_left
         integer subject_top
         integer subject_width
@@ -46,9 +46,10 @@ erDiagram
 
 ## Notes
 
-- Primary keys are UUIDv7. Timestamps are UTC instants (`utc_datetime_usec`).
-- `listings.state` is the current state name: `start`, `photos_taken`, `photos_resized`, `photos_approved`. Allowed moves live in code, not in a table, so a new state can be inserted later without rewriting rows. A check constraint limits the column to the known names and is updated when a state is added.
+- Primary keys are `bigint`. Timestamps are UTC instants (`utc_datetime_usec`).
+- `listings.state` is the current state name: `start`, `photos_taken`, `photo_edits_drafted`, `photo_edits_approved`. Allowed moves live in code, not in a table. The name is not a progress number, so a later move can return to an earlier name without rewriting other listings. A check constraint limits the column to the known names and is widened when a name is added. `photo_edits_denied` is not in the initial set.
 - A listing may exist in `start` with no photos. `title` may be empty until the item is named.
 - `photos.position` is unique per listing. Deleting a listing deletes its photos.
-- `original_key` is the raw upload. The resize job writes `processed_key` and the subject box (pixels of the original). Those columns stay null until then. Re-running the job overwrites them. The box is the rembg result, so a later crop does not have to call rembg again.
+- `original_path` is the raw upload on disk and is never replaced. The edit job writes `edited_path` and the subject box (pixels of the original). Those columns stay null until then. A rework overwrites the edit in place. There is no edit-history table.
+- The listing state does not say which file a photo uses. While there is no per-photo choice, an approved listing uses `edited_path` when it is present. A later nullable column on `photos` can record `original` or `edited` for each photo. Old rows stay valid, and no photo needs its own state.
 - The resize job is an Oban job argument, not a table. Oban's own tables are not part of this diagram.
