@@ -10,6 +10,7 @@ defmodule Flipper.Application do
     children = [
       FlipperWeb.Telemetry,
       Flipper.Repo,
+      Flipper.Ebay.Session,
       {Oban, Application.fetch_env!(:flipper, Oban)},
       {DNSCluster, query: Application.get_env(:flipper, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Flipper.PubSub},

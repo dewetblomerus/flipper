@@ -12,7 +12,9 @@ defmodule Flipper.Drafts do
   alias Flipper.Workers.FetchDraft
 
   def list_drafts do
-    Repo.all(from d in Draft, order_by: [desc: d.id])
+    photos = from p in Photo, order_by: p.position
+
+    Repo.all(from d in Draft, order_by: [desc: d.id], preload: [photos: ^photos])
   end
 
   def get_draft!(id) do

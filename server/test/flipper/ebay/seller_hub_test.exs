@@ -140,13 +140,6 @@ defmodule Flipper.Ebay.SellerHubTest do
   end
 
   test "fetch without a cookie fails" do
-    previous = Application.get_env(:flipper, :ebay_cookie)
-    Application.put_env(:flipper, :ebay_cookie, nil)
-
-    on_exit(fn ->
-      if previous, do: Application.put_env(:flipper, :ebay_cookie, previous)
-    end)
-
-    assert {:error, "EBAY_COOKIE is not set"} = Client.fetch("1")
+    assert {:error, "eBay cookie is not set"} = Client.fetch("1", cookie: nil)
   end
 end
