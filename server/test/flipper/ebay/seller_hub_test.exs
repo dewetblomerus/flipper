@@ -142,4 +142,43 @@ defmodule Flipper.Ebay.SellerHubTest do
   test "fetch without a cookie fails" do
     assert {:error, "eBay cookie is not set"} = Client.fetch("1", cookie: nil)
   end
+
+  @listing_page ~S"""
+  <html>
+    <div data-srt="{&quot;/lstng/api/listing_draft/:draftId(\\d+)/skip_validation&quot;:&quot;srt-token&quot;}"></div>
+    <script>
+      window.model = {"epsData":{"s":"SuperSize","n":"i","v":"2","uaek":"640","uaes":"uaes-token","aXRequest":"2","wm":"","endpoint":"https://mach-100.ebay.com/ws/eBayISAPI.dll?EpsBasic","type":"POST"},
+        "PHOTOS":{"_type":"PhotosViewHelix","photosInput":{"photos":[
+          {"url":"https://i.ebayimg.com/00/s/aaa/z/one/$_1.JPG?set_id=8","thumbnail":"t1"},
+          {"url":"https://i.ebayimg.com/00/s/aaa/z/two/$_1.JPG?set_id=8","thumbnail":"t2"}
+        ]}}};
+    </script>
+  </html>
+  """
+
+  test "the listing page holds the upload fields, save token, and current photos" do
+    assert {:ok, %{"uaes" => "uaes-token", "endpoint" => "https://mach-100" <> _}} =
+             Client.eps_data(@listing_page)
+
+    assert {:ok, "srt-token"} = Client.save_token(@listing_page)
+
+    assert {:ok,
+            [
+              "https://i.ebayimg.com/00/s/aaa/z/one/$_1.JPG?set_id=8",
+              "https://i.ebayimg.com/00/s/aaa/z/two/$_1.JPG?set_id=8"
+            ]} = Client.draft_photos(@listing_page)
+  end
+
+  test "a page without them is an error" do
+    assert {:error, _} = Client.eps_data("<html></html>")
+    assert {:error, _} = Client.save_token("<html></html>")
+    assert {:error, _} = Client.draft_photos("<html></html>")
+  end
+
+  test "the upload response holds the hosted photo url" do
+    url = "https://i.ebayimg.com/00/s/aaa/z/new/$_1.PNG?set_id=8"
+    assert {:ok, ^url} = Client.uploaded_url("VERSION:2;" <> url)
+    assert {:error, _} = Client.uploaded_url("VERSION:2;https://example.com/x.png")
+    assert {:error, _} = Client.uploaded_url("ERROR")
+  end
 end

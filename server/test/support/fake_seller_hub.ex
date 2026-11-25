@@ -33,4 +33,16 @@ defmodule Flipper.Ebay.FakeSellerHub do
   end
 
   def download(_url), do: {:ok, @jpeg, "image/jpeg"}
+
+  def upload_photo(ebay_draft_id, path, content_type) do
+    send(self(), {:ebay_photo_uploaded, ebay_draft_id, path, content_type})
+    {:ok, "https://i.ebayimg.com/images/g/new/s-l1600.png"}
+  end
+
+  def set_first_photo("500", _url), do: {:error, "eBay returned 500"}
+
+  def set_first_photo(ebay_draft_id, url) do
+    send(self(), {:ebay_first_photo_set, ebay_draft_id, url})
+    :ok
+  end
 end

@@ -1,6 +1,7 @@
 defmodule Flipper.Drafts do
   @moduledoc """
-  Lists drafts, creates one from a pasted eBay draft URL, and edits its photos.
+  Lists drafts, creates one from a pasted eBay draft URL, edits its photos, and replaces the
+  approved edit on eBay.
   """
 
   import Ecto.Query
@@ -11,6 +12,7 @@ defmodule Flipper.Drafts do
   alias Flipper.Repo
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
+  alias Flipper.Workers.ReplaceEbayPhoto
 
   def list_drafts do
     photos = from p in Photo, order_by: p.position
@@ -84,6 +86,10 @@ defmodule Flipper.Drafts do
     update_state(draft, "photos_taken")
   end
 
+  def transition(%Draft{state: "photo_edits_drafted"} = draft, :photo_edits_approved) do
+    update_state(draft, "photo_edits_approved")
+  end
+
   def transition(%Draft{}, _to), do: {:error, :invalid_transition}
 
   def edit_photo(%Photo{} = photo) do
@@ -112,10 +118,7 @@ defmodule Flipper.Drafts do
   def choose_edit(%Photo{edited_path: nil}, _use_edited), do: {:error, :not_edited}
 
   def choose_edit(%Photo{} = photo, use_edited) when is_boolean(use_edited) do
-    photo
-    |> Ecto.Changeset.change(use_edited: use_edited)
-    |> Repo.update()
-    |> case do
+    case approve(photo, use_edited) do
       {:ok, photo} ->
         broadcast_changed(photo.draft_id)
         {:ok, photo}
@@ -124,6 +127,45 @@ defmodule Flipper.Drafts do
         {:error, reason}
     end
   end
+
+  def replace_on_ebay(%Photo{replaced_on_ebay_at: %DateTime{}}), do: :ok
+
+  def replace_on_ebay(%Photo{} = photo) do
+    photo = Repo.preload(photo, :draft)
+
+    with {:ok, photo} <- upload_edit(photo),
+         :ok <- SellerHub.set_first_photo(photo.draft.ebay_draft_id, photo.edited_ebay_url),
+         {:ok, photo} <- update_photo(photo, replaced_on_ebay_at: DateTime.utc_now()) do
+      broadcast_changed(photo.draft_id)
+      :ok
+    end
+  end
+
+  def record_ebay_error(%Photo{} = photo, reason) when is_binary(reason) do
+    {:ok, _photo} = update_photo(photo, ebay_error: reason)
+    broadcast_changed(photo.draft_id)
+    :ok
+  end
+
+  def retry_ebay_photo(%Draft{state: "photo_edits_approved", id: id}) do
+    case first_photo(id) do
+      %Photo{use_edited: true, ebay_error: error} = photo when is_binary(error) ->
+        {:ok, photo} =
+          Repo.transaction(fn ->
+            {:ok, photo} = update_photo(photo, ebay_error: nil)
+            insert_job(ReplaceEbayPhoto.new(%{photo_id: photo.id}))
+            photo
+          end)
+
+        broadcast_changed(id)
+        {:ok, photo}
+
+      _photo ->
+        {:error, :nothing_to_retry}
+    end
+  end
+
+  def retry_ebay_photo(%Draft{}), do: {:error, :nothing_to_retry}
 
   def fetch_from_ebay(%Draft{} = draft) do
     if has_photos?(draft) do
@@ -236,9 +278,61 @@ defmodule Flipper.Drafts do
 
   defp clear_and_enqueue(%Draft{id: id}) do
     Repo.transaction(fn ->
-      draft = Repo.one!(from d in Draft, where: d.id == ^id, lock: "FOR UPDATE")
-      clear_first_edit(draft, first_photo(id))
+      case lock_draft(id) do
+        %Draft{state: state} = draft when state in ["photos_taken", "photo_edits_drafted"] ->
+          clear_first_edit(draft, first_photo(id))
+
+        _draft ->
+          Repo.rollback(:invalid_transition)
+      end
     end)
+  end
+
+  defp approve(%Photo{} = photo, use_edited) do
+    Repo.transaction(fn ->
+      with {:ok, _draft} <- transition(lock_draft(photo.draft_id), :photo_edits_approved),
+           {:ok, photo} <- update_photo(photo, use_edited: use_edited),
+           :ok <- enqueue_replace(photo) do
+        photo
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp enqueue_replace(%Photo{use_edited: true, id: id}) do
+    insert_job(ReplaceEbayPhoto.new(%{photo_id: id}))
+  end
+
+  defp enqueue_replace(%Photo{}), do: :ok
+
+  defp upload_edit(%Photo{edited_ebay_url: url} = photo) when is_binary(url), do: {:ok, photo}
+
+  defp upload_edit(%Photo{} = photo) do
+    with {:ok, path, type} <- photo_file(photo, :edited) |> found(),
+         {:ok, url} <- SellerHub.upload_photo(photo.draft.ebay_draft_id, path, type) do
+      update_photo(photo, edited_ebay_url: url)
+    end
+  end
+
+  defp found({:ok, path, type}), do: {:ok, path, type}
+  defp found(:error), do: {:error, "edited photo is missing"}
+
+  defp update_photo(photo, changes) do
+    photo
+    |> Ecto.Changeset.change(changes)
+    |> Repo.update()
+  end
+
+  defp insert_job(changeset) do
+    case Oban.insert(changeset) do
+      {:ok, _job} -> :ok
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp lock_draft(id) do
+    Repo.one!(from d in Draft, where: d.id == ^id, lock: "FOR UPDATE")
   end
 
   defp clear_first_edit(draft, %Photo{edited_path: path} = photo) when is_binary(path) do
@@ -272,12 +366,7 @@ defmodule Flipper.Drafts do
   end
 
   defp insert_edit_jobs(ids) do
-    Enum.each(ids, fn photo_id ->
-      case %{photo_id: photo_id} |> EditPhoto.new() |> Oban.insert() do
-        {:ok, _job} -> :ok
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
+    Enum.each(ids, fn photo_id -> insert_job(EditPhoto.new(%{photo_id: photo_id})) end)
   end
 
   defp write_edit(%Photo{edited_path: path}) when is_binary(path), do: :ok
@@ -316,7 +405,7 @@ defmodule Flipper.Drafts do
 
   defp lock_and_finish(draft_id) do
     Repo.transaction(fn ->
-      draft = Repo.one!(from d in Draft, where: d.id == ^draft_id, lock: "FOR UPDATE")
+      draft = lock_draft(draft_id)
 
       if edits_pending?(draft_id) do
         :ok

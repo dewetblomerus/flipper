@@ -33,6 +33,13 @@ defmodule FlipperWeb.DraftLive.Show do
       </p>
       <p :if={@draft.fetch_error}>{@draft.fetch_error}</p>
 
+      <div :if={ebay_status(@draft)} class="flex items-center gap-4">
+        <p id="ebay-photo-status">{ebay_status(@draft)}</p>
+        <.button :if={retry_ebay?(@draft)} id="retry-ebay-photo" phx-click="retry_ebay_photo">
+          Retry
+        </.button>
+      </div>
+
       <ul :if={@draft.photos != []} id="draft-photos" class="space-y-8">
         <li
           :for={photo <- @draft.photos}
@@ -47,8 +54,9 @@ defmodule FlipperWeb.DraftLive.Show do
               phx-value-id={photo.id}
               phx-value-use_edited="false"
               aria-pressed={to_string(photo.use_edited == false)}
+              disabled={approved?(@draft)}
               class={[
-                "rounded-xl border border-base-300 p-2 text-left transition hover:border-primary",
+                "rounded-xl border border-base-300 p-2 text-left transition enabled:hover:border-primary",
                 photo.use_edited == false && "ring-2 ring-primary"
               ]}
             >
@@ -66,8 +74,9 @@ defmodule FlipperWeb.DraftLive.Show do
               phx-value-id={photo.id}
               phx-value-use_edited="true"
               aria-pressed={to_string(photo.use_edited == true)}
+              disabled={approved?(@draft)}
               class={[
-                "rounded-xl border border-base-300 p-2 text-left transition hover:border-primary",
+                "rounded-xl border border-base-300 p-2 text-left transition enabled:hover:border-primary",
                 photo.use_edited == true && "ring-2 ring-primary"
               ]}
             >
@@ -152,6 +161,17 @@ defmodule FlipperWeb.DraftLive.Show do
   end
 
   @impl true
+  def handle_event("retry_ebay_photo", _params, socket) do
+    case Drafts.retry_ebay_photo(socket.assigns.draft) do
+      {:ok, _photo} ->
+        {:noreply, assign(socket, :draft, Drafts.get_draft!(socket.assigns.draft.id))}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Nothing to retry.")}
+    end
+  end
+
+  @impl true
   def handle_event("choose_edit", %{"id" => id, "use_edited" => choice}, socket)
       when choice in ["true", "false"] do
     draft = socket.assigns.draft
@@ -165,8 +185,29 @@ defmodule FlipperWeb.DraftLive.Show do
   defp first_photo?(%{photos: [first | _]}, photo), do: photo.id == first.id
   defp first_photo?(_draft, _photo), do: false
 
-  defp redo_edit?(%{photos: [first | _]}), do: is_binary(first.edited_path)
+  defp redo_edit?(%{photos: [first | _]} = draft) do
+    is_binary(first.edited_path) and not approved?(draft)
+  end
+
   defp redo_edit?(_draft), do: false
+
+  defp approved?(draft), do: draft.state == "photo_edits_approved"
+
+  defp ebay_status(%{state: "photo_edits_approved", photos: [%{use_edited: true} = first | _]}) do
+    cond do
+      first.replaced_on_ebay_at -> "Replaced on eBay."
+      first.ebay_error -> "eBay replacement failed: #{first.ebay_error}"
+      true -> "Replacing on eBay."
+    end
+  end
+
+  defp ebay_status(_draft), do: nil
+
+  defp retry_ebay?(%{state: "photo_edits_approved", photos: [first | _]}) do
+    first.use_edited == true and is_binary(first.ebay_error)
+  end
+
+  defp retry_ebay?(_draft), do: false
 
   defp save_choice(socket, draft, photo, use_edited) do
     case Drafts.choose_edit(photo, use_edited) do
@@ -175,6 +216,9 @@ defmodule FlipperWeb.DraftLive.Show do
 
       {:error, :not_edited} ->
         {:noreply, put_flash(socket, :error, "That photo is still editing.")}
+
+      {:error, :invalid_transition} ->
+        {:noreply, put_flash(socket, :error, "That choice is already approved.")}
 
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Could not save the choice.")}

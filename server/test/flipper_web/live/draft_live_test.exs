@@ -10,6 +10,7 @@ defmodule FlipperWeb.DraftLiveTest do
   alias Flipper.Repo
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
+  alias Flipper.Workers.ReplaceEbayPhoto
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022"
 
@@ -161,7 +162,7 @@ defmodule FlipperWeb.DraftLiveTest do
       refute html =~ "Refresh"
     end
 
-    test "shows the original and the edit and stores the choice", %{conn: conn} do
+    test "shows the original and the edit, and redo runs the edit again", %{conn: conn} do
       {:ok, draft} = Drafts.paste_url(@url)
       {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
       assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
@@ -175,16 +176,6 @@ defmodule FlipperWeb.DraftLiveTest do
       assert html =~ "/photos/#{photo.id}/edited"
       refute html =~ "Editing"
 
-      view |> element("#photo-#{photo.id}-edited") |> render_click()
-      assert Repo.get!(Photo, photo.id).use_edited == true
-      assert Drafts.get_draft!(draft.id).state == "photo_edits_drafted"
-      assert has_element?(view, "#photo-#{photo.id}-edited[aria-pressed='true']")
-
-      view |> element("#photo-#{photo.id}-original") |> render_click()
-      assert Repo.get!(Photo, photo.id).use_edited == false
-      assert has_element?(view, "#photo-#{photo.id}-original[aria-pressed='true']")
-      assert Drafts.get_draft!(draft.id).state == "photo_edits_drafted"
-
       Repo.update_all(from(j in Oban.Job, where: j.state == "available"),
         set: [state: "discarded"]
       )
@@ -193,6 +184,62 @@ defmodule FlipperWeb.DraftLiveTest do
       assert html =~ "Editing"
       assert html =~ "photos_taken"
       assert [_] = all_enqueued(worker: EditPhoto, args: %{photo_id: photo.id})
+    end
+
+    test "picking the edit approves it and replaces it on eBay", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+      photo = hd(Drafts.get_draft!(draft.id).photos)
+      assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+
+      view |> element("#photo-#{photo.id}-edited") |> render_click()
+      assert Repo.get!(Photo, photo.id).use_edited == true
+      assert Drafts.get_draft!(draft.id).state == "photo_edits_approved"
+      assert has_element?(view, "#photo-#{photo.id}-edited[aria-pressed='true'][disabled]")
+      assert has_element?(view, "#photo-#{photo.id}-original[disabled]")
+      refute has_element?(view, "#redo-edits")
+      assert has_element?(view, "#ebay-photo-status", "Replacing on eBay")
+
+      assert :ok = perform_job(ReplaceEbayPhoto, %{photo_id: photo.id})
+      assert has_element?(view, "#ebay-photo-status", "Replaced on eBay")
+    end
+
+    test "picking the original approves it without eBay", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url(@url)
+      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+      photo = hd(Drafts.get_draft!(draft.id).photos)
+      assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+
+      view |> element("#photo-#{photo.id}-original") |> render_click()
+      assert Repo.get!(Photo, photo.id).use_edited == false
+      assert Drafts.get_draft!(draft.id).state == "photo_edits_approved"
+      assert has_element?(view, "#photo-#{photo.id}-original[aria-pressed='true'][disabled]")
+      refute has_element?(view, "#ebay-photo-status")
+      assert [] = all_enqueued(worker: ReplaceEbayPhoto)
+    end
+
+    test "a failed eBay replacement shows the error and retries", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=500")
+      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+      photo = hd(Drafts.get_draft!(draft.id).photos)
+      assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+      view |> element("#photo-#{photo.id}-edited") |> render_click()
+
+      assert {:error, _} =
+               perform_job(ReplaceEbayPhoto, %{photo_id: photo.id}, attempt: 3, max_attempts: 3)
+
+      assert has_element?(view, "#ebay-photo-status", "eBay returned 500")
+
+      Repo.update_all(from(j in Oban.Job, where: j.state == "available"),
+        set: [state: "discarded"]
+      )
+
+      view |> element("#retry-ebay-photo") |> render_click()
+      assert has_element?(view, "#ebay-photo-status", "Replacing on eBay")
+      assert [_] = all_enqueued(worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
     end
 
     test "serves the edited photo and refuses a path outside the photo directory", %{conn: conn} do
