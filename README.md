@@ -17,18 +17,7 @@ An approval step sits between the processed photo and any call to the eBay API. 
 
 New states can be inserted between existing ones later by adding a transition. Already-processed listings are unaffected.
 
-## Stack
+## Docs
 
-- Elixir / Phoenix LiveView
-- PostgreSQL
-- Oban (open-source) for background jobs
-- [rembg](https://github.com/danielgatis/rembg) (local CPU) plus a normal image library for the crop and resize
-- Fly.io — a small shared-cpu machine is sufficient
-
-## Design notes
-
-- Transitions live in one place so the allowed path stays obvious.
-- The resize job is independent of other workers.
-- Subject crop uses local background removal and a bounding box, not an LLM call.
-- eBay API usage stays behind the approval gate.
-- Start with the photo step only. Pricing research and other automations can be added later as new states and jobs.
+- [Stack](docs/stack.md)
+- [Design notes](docs/design.md)
