@@ -4,9 +4,9 @@ A small Phoenix LiveView + PostgreSQL app that prepares eBay listings for a pers
 
 ## What it does
 
-A person pastes an eBay draft URL to create a draft. A job then reads the title and photos from Seller Hub. Each draft moves through an explicit state machine. The automated transition resizes and crops photos tightly around the subject. Other steps are manual.
+A person pastes an eBay draft URL to create a draft. A job then reads the title and photos from Seller Hub. Each draft moves through an explicit state machine. The automated transition straightens the first photo and crops it tightly around the subject. Other steps are manual.
 
-An approval step sits between the processed photo and any call to the eBay API. Nothing is uploaded until it has been reviewed.
+An approval step sits between the processed photo and any write to eBay. Nothing is uploaded until it has been reviewed.
 
 ### States
 

@@ -31,6 +31,7 @@ config :flipper, Oban, testing: :manual, queues: false, plugins: false
 config :flipper,
   photo_dir: Path.expand("../tmp/test_uploads", __DIR__),
   ebay_cookie_path: Path.expand("../tmp/ebay_cookie", __DIR__),
+  photo_editor: Flipper.Photos.FakeEditor,
   seller_hub: Flipper.Ebay.FakeSellerHub
 
 # Print only warnings and errors during test

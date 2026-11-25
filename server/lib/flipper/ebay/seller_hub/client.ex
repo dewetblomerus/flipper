@@ -1,6 +1,6 @@
 defmodule Flipper.Ebay.SellerHub.Client do
   @moduledoc """
-  Reads a Seller Hub draft page with the browser cookie.
+  Reads and writes a Seller Hub draft through its listing page, with the browser cookie.
   """
 
   alias Flipper.Ebay.Session
@@ -87,7 +87,160 @@ defmodule Flipper.Ebay.SellerHub.Client do
     end
   end
 
+  def upload_photo(ebay_draft_id, path, content_type, opts \\ []) do
+    with {:ok, cookie} <- signed_in_cookie(opts),
+         {:ok, body} <- listing_page(ebay_draft_id, cookie, opts),
+         {:ok, eps} <- eps_data(body) do
+      post_photo(eps, File.read!(path), content_type, cookie, opts)
+    end
+  end
+
+  def set_first_photo(ebay_draft_id, url, opts \\ []) do
+    with {:ok, cookie} <- signed_in_cookie(opts),
+         {:ok, body} <- listing_page(ebay_draft_id, cookie, opts),
+         {:ok, srt} <- save_token(body),
+         {:ok, photos} <- draft_photos(body) do
+      save_photos(ebay_draft_id, [url | Enum.drop(photos, 1)], srt, cookie, opts)
+    end
+  end
+
+  def eps_data(body) do
+    with {:ok, eps} <- object_after(body, ~s("epsData":)),
+         %{"endpoint" => "https://" <> _} <- eps do
+      {:ok, eps}
+    else
+      _ -> {:error, "eBay listing page had no photo upload"}
+    end
+  end
+
+  def save_token(body) do
+    key = ~S|"/lstng/api/listing_draft/:draftId(\\d+)/skip_validation":"|
+    text = String.replace(body, "&quot;", ~s("))
+
+    with [_, rest] <- String.split(text, key, parts: 2),
+         [token | _] when token != "" <- String.split(rest, ~s("), parts: 2) do
+      {:ok, token}
+    else
+      _ -> {:error, "eBay listing page had no save token"}
+    end
+  end
+
+  def draft_photos(body) do
+    case object_after(body, ~s("photosInput":)) do
+      {:ok, %{"photos" => photos}} when is_list(photos) ->
+        {:ok, for(%{"url" => url} <- photos, is_binary(url), do: url)}
+
+      _ ->
+        {:error, "eBay listing page had no photos"}
+    end
+  end
+
+  def uploaded_url("VERSION:2;" <> url) do
+    url = String.trim(url)
+
+    if ebayimg?(url, "$_"),
+      do: {:ok, url},
+      else: {:error, "eBay photo upload returned #{url}"}
+  end
+
+  def uploaded_url(other),
+    do: {:error, "eBay photo upload returned #{String.slice(other, 0, 200)}"}
+
+  defp signed_in_cookie(opts) do
+    case cookie_from(opts) do
+      cookie when is_binary(cookie) and cookie != "" -> {:ok, cookie}
+      _ -> {:error, "eBay cookie is not set"}
+    end
+  end
+
+  defp post_photo(eps, data, content_type, cookie, opts) do
+    fields =
+      for key <- ~w(s n v uaek uaes aXRequest wm),
+          do: {key, to_string(eps[key] || "")}
+
+    url =
+      eps["endpoint"] <>
+        "&" <>
+        URI.encode_query(
+          fileId: 1,
+          fId: System.os_time(:millisecond),
+          fileSize: byte_size(data),
+          ar: "/lstng"
+        )
+
+    req_opts =
+      Keyword.merge(
+        [
+          headers: [{"cookie", cookie} | api_headers()],
+          form_multipart:
+            fields ++ [{"Filedata", {data, filename: "blob", content_type: content_type}}],
+          redirect: false,
+          decode_body: false,
+          retry: false
+        ],
+        Keyword.delete(opts, :cookie)
+      )
+
+    case Req.post(url, req_opts) do
+      {:ok, %{status: 200, body: body}} when is_binary(body) -> uploaded_url(body)
+      {:ok, %{status: status}} -> {:error, "eBay photo upload returned #{status}"}
+      {:error, _reason} -> {:error, "eBay photo upload failed"}
+    end
+  end
+
+  defp save_photos(ebay_draft_id, pictures, srt, cookie, opts) do
+    url =
+      "https://www.ebay.com/lstng/api/listing_draft/#{ebay_draft_id}/skip_validation?mode=SellLikeItem"
+
+    req_opts =
+      Keyword.merge(
+        [
+          headers: [{"cookie", cookie}, {"srt", srt} | api_headers()],
+          json: %{
+            pictures: pictures,
+            removedFields: [],
+            requestId: Ecto.UUID.generate(),
+            requestMeta: %{lastDeltaTimestamp: System.os_time(:millisecond)}
+          },
+          redirect: false,
+          retry: false
+        ],
+        Keyword.delete(opts, :cookie)
+      )
+
+    case Req.put(url, req_opts) do
+      {:ok, %{status: status}} when status in [200, 204] -> :ok
+      {:ok, %{status: status}} -> {:error, "eBay draft save returned #{status}"}
+      {:error, _reason} -> {:error, "eBay draft save failed"}
+    end
+  end
+
+  defp api_headers do
+    [
+      {"accept-language", "en-US,en;q=0.9"},
+      {"origin", "https://www.ebay.com"},
+      {"referer", "https://www.ebay.com/lstng"},
+      {"user-agent", @user_agent}
+    ]
+  end
+
+  defp object_after(body, key) do
+    with {start, len} <- :binary.match(body, key),
+         {:ok, slice, _next} <- slice_object(body, start + len),
+         {:ok, value} <- Jason.decode(slice) do
+      {:ok, value}
+    else
+      _ -> :error
+    end
+  end
+
   defp request(ebay_draft_id, cookie, opts) do
+    with {:ok, body} <- listing_page(ebay_draft_id, cookie, opts) do
+      parse(body)
+    end
+  end
+
+  defp listing_page(ebay_draft_id, cookie, opts) do
     query =
       URI.encode_query(
         draftId: ebay_draft_id,
@@ -95,7 +248,7 @@ defmodule Flipper.Ebay.SellerHub.Client do
         ReturnURL: @drafts_url
       )
 
-    fetch_page("https://www.ebay.com/lstng?" <> query, cookie, opts, 5)
+    fetch_page("https://www.ebay.com/lstng?" <> query, cookie, Keyword.delete(opts, :cookie), 5)
   end
 
   defp fetch_page(_url, _cookie, _opts, 0), do: {:error, "eBay returned too many redirects"}
@@ -109,7 +262,7 @@ defmodule Flipper.Ebay.SellerHub.Client do
         if challenge_page?(body) do
           {:error, "eBay asked for a browser check"}
         else
-          parse(body)
+          {:ok, body}
         end
 
       {:ok, %{status: status}} ->
