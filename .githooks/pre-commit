@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+root=$(git rev-parse --show-toplevel)
+cd "$root/server"
+mix precommit
+cd "$root"
+git add -u

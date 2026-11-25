@@ -1,4 +1,8 @@
 defmodule Flipper.Workers.FetchDraft do
+  @moduledoc """
+  Loads a draft's title and photos from Seller Hub.
+  """
+
   use Oban.Worker,
     queue: :drafts,
     max_attempts: 3,

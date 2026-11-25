@@ -1,4 +1,8 @@
 defmodule Flipper.Ebay.FakeSellerHub do
+  @moduledoc """
+  Seller Hub stand-in for tests.
+  """
+
   @jpeg <<0xFF, 0xD8, 0xFF, 0xD9>>
 
   def fetch("0") do

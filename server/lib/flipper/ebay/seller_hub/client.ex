@@ -1,4 +1,8 @@
 defmodule Flipper.Ebay.SellerHub.Client do
+  @moduledoc """
+  Reads a Seller Hub draft page with the browser cookie.
+  """
+
   @image_types ~w(image/jpeg image/png image/gif image/webp image/avif image/heic)
   @drafts_url "https://www.ebay.com/sh/lst/drafts"
   @user_agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36"
@@ -251,16 +255,21 @@ defmodule Flipper.Ebay.SellerHub.Client do
         acc
 
       {start, _len} ->
-        case slice_object(text, start) do
-          {:ok, slice, next} ->
-            case Jason.decode(slice) do
-              {:ok, value} -> collect_objects(text, next, [value | acc])
-              _ -> collect_objects(text, start + 2, acc)
-            end
+        collect_slice(text, start, acc)
+    end
+  end
 
-          :error ->
-            collect_objects(text, start + 2, acc)
-        end
+  defp collect_slice(text, start, acc) do
+    case slice_object(text, start) do
+      {:ok, slice, next} -> collect_decoded(text, start, next, slice, acc)
+      :error -> collect_objects(text, start + 2, acc)
+    end
+  end
+
+  defp collect_decoded(text, start, next, slice, acc) do
+    case Jason.decode(slice) do
+      {:ok, value} -> collect_objects(text, next, [value | acc])
+      _ -> collect_objects(text, start + 2, acc)
     end
   end
 
@@ -273,36 +282,44 @@ defmodule Flipper.Ebay.SellerHub.Client do
 
   defp slice_object(text, start, index, size, depth, string?, escape?) do
     <<char>> = binary_part(text, index, 1)
+    advance(text, start, index, size, depth, string?, escape?, char)
+  end
 
-    cond do
-      escape? ->
-        slice_object(text, start, index + 1, size, depth, string?, false)
+  defp advance(text, start, index, size, depth, string?, true, _char) do
+    slice_object(text, start, index + 1, size, depth, string?, false)
+  end
 
-      string? and char == ?\\ ->
-        slice_object(text, start, index + 1, size, depth, true, true)
+  defp advance(text, start, index, size, depth, true, false, ?\\) do
+    slice_object(text, start, index + 1, size, depth, true, true)
+  end
 
-      string? and char == ?" ->
-        slice_object(text, start, index + 1, size, depth, false, false)
+  defp advance(text, start, index, size, depth, true, false, ?") do
+    slice_object(text, start, index + 1, size, depth, false, false)
+  end
 
-      string? ->
-        slice_object(text, start, index + 1, size, depth, true, false)
+  defp advance(text, start, index, size, depth, true, false, _char) do
+    slice_object(text, start, index + 1, size, depth, true, false)
+  end
 
-      char == ?" ->
-        slice_object(text, start, index + 1, size, depth, true, false)
+  defp advance(text, start, index, size, depth, false, false, ?") do
+    slice_object(text, start, index + 1, size, depth, true, false)
+  end
 
-      char == ?{ ->
-        slice_object(text, start, index + 1, size, depth + 1, false, false)
+  defp advance(text, start, index, size, depth, false, false, ?{) do
+    slice_object(text, start, index + 1, size, depth + 1, false, false)
+  end
 
-      char == ?} and depth == 1 ->
-        next = index + 1
-        {:ok, binary_part(text, start, next - start), next}
+  defp advance(text, start, index, _size, depth, false, false, ?}) when depth == 1 do
+    next = index + 1
+    {:ok, binary_part(text, start, next - start), next}
+  end
 
-      char == ?} ->
-        slice_object(text, start, index + 1, size, depth - 1, false, false)
+  defp advance(text, start, index, size, depth, false, false, ?}) do
+    slice_object(text, start, index + 1, size, depth - 1, false, false)
+  end
 
-      true ->
-        slice_object(text, start, index + 1, size, depth, false, false)
-    end
+  defp advance(text, start, index, size, depth, false, false, _char) do
+    slice_object(text, start, index + 1, size, depth, false, false)
   end
 
   defp choose_title([]), do: nil
