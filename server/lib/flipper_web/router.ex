@@ -17,7 +17,9 @@ defmodule FlipperWeb.Router do
   scope "/", FlipperWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", DraftLive, :new
+    live "/drafts", DraftLive, :index
+    live "/drafts/:id", DraftLive, :show
   end
 
   # Other scopes may use custom stacks.

@@ -4,18 +4,18 @@ A small Phoenix LiveView + PostgreSQL app that prepares eBay listings for a pers
 
 ## What it does
 
-A person pastes an eBay draft URL to create a listing. Each listing moves through an explicit state machine. The automated transition resizes and crops photos tightly around the subject. Other steps are manual.
+A person pastes an eBay draft URL to create a draft. Each draft moves through an explicit state machine. The automated transition resizes and crops photos tightly around the subject. Other steps are manual.
 
 An approval step sits between the processed photo and any call to the eBay API. Nothing is uploaded until it has been reviewed.
 
 ### States
 
-1. `started` — the listing exists
+1. `started` — the draft exists
 2. `photos_taken` — raw photos are available
 3. `photo_edits_drafted` — automatic edits are ready for review
 4. `photo_edits_approved` — review is complete
 
-The current state is a name. A transition adds a state name or returns to an earlier one. Listings already past that point stay where they are.
+The current state is a name. A transition adds a state name or returns to an earlier one. Drafts already past that point stay where they are.
 
 ## Docs
 
