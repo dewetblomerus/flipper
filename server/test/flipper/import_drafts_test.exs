@@ -105,6 +105,26 @@ defmodule Flipper.ImportDraftsTest do
     assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: waiting.id})
   end
 
+  test "a failed read insertion leaves a waiting draft eligible for another import" do
+    waiting = waiting_draft("11")
+    list([listed("11", "A-2")])
+
+    Repo.query!("""
+    ALTER TABLE oban_jobs ADD CONSTRAINT reject_automated_read
+      CHECK (queue <> 'ebay_automated')
+    """)
+
+    assert_raise Ecto.ConstraintError, ~r/reject_automated_read/, fn ->
+      Drafts.import_from_ebay()
+    end
+
+    assert Repo.get!(Draft, waiting.id).import_read_at == nil
+    Repo.query!("ALTER TABLE oban_jobs DROP CONSTRAINT reject_automated_read")
+
+    assert :ok = perform_job(ImportDrafts, %{})
+    assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: waiting.id})
+  end
+
   test "queues a draft's read at most once a day, even when its page shows no SKU" do
     list([listed("11", "A-2")])
     assert :ok = perform_job(ImportDrafts, %{})
@@ -143,7 +163,7 @@ defmodule Flipper.ImportDraftsTest do
     :ok = Session.reject("secret-value")
 
     assert {:cancel, _} = perform_job(ImportDrafts, %{})
-    assert {:cancel, _} = ImportDrafts.run()
+    assert {:cancel, _} = ImportDrafts.run_automated()
     refute_received :ebay_drafts_listed
 
     assert {:cancel, _} =

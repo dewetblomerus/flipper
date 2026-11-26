@@ -16,11 +16,10 @@ config :flipper,
 
 config :flipper, Oban,
   repo: Flipper.Repo,
-  # A person's eBay work runs in ebay, unattended work in ebay_automated. The cooldown
-  # jitters ebay_automated job starts, at least 5s apart.
+  # A person's eBay work runs in ebay, unattended work in ebay_automated.
   queues: [
     ebay: 1,
-    ebay_automated: [limit: 1, dispatch_cooldown: :timer.seconds(10)],
+    ebay_automated: 1,
     photos: 1
   ],
   cron: [crontab: [{"@hourly", Flipper.Workers.ImportDrafts}]],

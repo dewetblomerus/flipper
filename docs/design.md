@@ -12,7 +12,7 @@
 - Reading and writing a Seller Hub draft use the seller's session. No public eBay API edits a draft; Flipper uses the [private one](ebay/README.md). Every write to eBay stays behind an approval, and each approval is a draft state.
 - Replacing the photo, reading the draft, and removing fields are separate jobs.
 - Every Oban worker that calls eBay runs in `ebay`, for what a person starts, or `ebay_automated`, for unattended work. Each has a limit of 1 per node.
-- `ebay_automated` has a jittered 10s dispatch cooldown, so its jobs start at least 5s apart.
+- Boot imports and `ebay_automated` jobs share a lock on each server and start at least 5s apart, with a jittered delay averaging 10s.
 - The automated steps are the drafts import and the photo edit. Further automations are new states and jobs.
 - Single household, and strictly single tenant. One database is the whole business. A multi-tenant SaaS is a rewrite on a fresh database.
 

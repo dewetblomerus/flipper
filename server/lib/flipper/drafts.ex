@@ -358,7 +358,9 @@ defmodule Flipper.Drafts do
   defp import_listed(listed, %Draft{state: "awaiting_sku"} = draft) do
     {:ok, draft} = update_draft(draft, listed_fields(listed) ++ listed_age(listed))
 
-    if ready?(listed) and due?(draft), do: {:ok, _draft} = queue_import_read(draft)
+    if ready?(listed) and due?(draft) do
+      {:ok, _draft} = Repo.transact(fn -> queue_import_read(draft) end)
+    end
   end
 
   defp import_listed(listed, draft) do
@@ -373,27 +375,28 @@ defmodule Flipper.Drafts do
       |> Ecto.Changeset.change(listed_fields(listed) ++ listed_age(listed))
 
     {:ok, _result} =
-      Repo.transaction(fn ->
+      Repo.transact(fn ->
         case Repo.insert(changeset, on_conflict: :nothing, conflict_target: :ebay_draft_id) do
           # A paste added it first.
-          {:ok, %Draft{id: nil}} -> :ok
+          {:ok, %Draft{id: nil}} -> {:ok, :already_added}
           {:ok, draft} -> start_listed(draft, listed)
-          {:error, reason} -> Repo.rollback(reason)
+          {:error, reason} -> {:error, reason}
         end
       end)
   end
 
   defp start_listed(draft, listed) do
     if ready?(listed) do
-      {:ok, _draft} = queue_import_read(draft)
+      queue_import_read(draft)
     else
-      {:ok, _draft} = transition(draft, :awaiting_sku)
+      transition(draft, :awaiting_sku)
     end
   end
 
   defp queue_import_read(draft) do
-    {:ok, draft} = update_draft(draft, import_read_at: DateTime.utc_now())
-    enqueue_fetch(draft, :ebay_automated)
+    with {:ok, draft} <- update_draft(draft, import_read_at: DateTime.utc_now()) do
+      enqueue_fetch(draft, :ebay_automated, retry: false)
+    end
   end
 
   defp listed_fields(%{title: title, sku: sku}) do
@@ -829,13 +832,13 @@ defmodule Flipper.Drafts do
     |> Repo.update()
   end
 
-  defp enqueue_fetch(draft, queue) do
+  defp enqueue_fetch(draft, queue, opts \\ []) do
     if has_photos?(draft) do
       {:ok, draft}
     else
       draft
       |> fetch_job(queue)
-      |> Oban.insert()
+      |> Oban.insert(opts)
       |> case do
         {:ok, _job} -> {:ok, draft}
         {:error, reason} -> {:error, reason}

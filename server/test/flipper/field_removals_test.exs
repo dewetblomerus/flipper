@@ -146,6 +146,26 @@ defmodule Flipper.FieldRemovalsTest do
     assert_enqueued(worker: RemoveEbayFields, args: %{draft_id: draft.id})
   end
 
+  test "only a discarded crash makes an interrupted removal retryable" do
+    draft = reviewed_draft("22")
+    {:ok, _draft} = Drafts.approve_field_removals(draft, ["subtitle"])
+    [job] = all_enqueued(worker: RemoveEbayFields)
+
+    :telemetry.execute([:oban, :job, :exception], %{}, %{job: job, state: :failure, kind: :exit})
+    assert Repo.get!(Draft, draft.id).removal_error == nil
+
+    job
+    |> Ecto.Changeset.change(state: "discarded", attempt: job.max_attempts)
+    |> Repo.update!()
+
+    :telemetry.execute([:oban, :job, :exception], %{}, %{job: job, state: :discard, kind: :exit})
+
+    draft = Repo.get!(Draft, draft.id)
+    assert is_binary(draft.removal_error)
+    assert {:ok, %Draft{removal_error: nil}} = Drafts.retry_removals(draft)
+    assert_enqueued(worker: RemoveEbayFields, args: %{draft_id: draft.id})
+  end
+
   test "a retry keeps the error while the failed job is still finishing" do
     draft = approved_draft("502")
     assert {:error, _} = perform_job(DraftFieldRemovals, %{draft_id: draft.id}, attempt: 3)

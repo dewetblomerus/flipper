@@ -15,10 +15,13 @@ defmodule Flipper.Workers.FetchDraft do
     ]
 
   alias Flipper.Drafts
-  alias Flipper.Ebay.Session
+  alias Flipper.Ebay.{Automated, Session}
 
   @impl true
-  def perform(%Oban.Job{args: %{"draft_id" => id}} = job) do
+  def perform(%Oban.Job{queue: "ebay_automated"} = job), do: Automated.run(fn -> read(job) end)
+  def perform(job), do: read(job)
+
+  defp read(%Oban.Job{args: %{"draft_id" => id}} = job) do
     draft = Drafts.get_draft!(id)
 
     if blocked?(job, draft) do

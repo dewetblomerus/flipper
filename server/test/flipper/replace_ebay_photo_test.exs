@@ -81,6 +81,26 @@ defmodule Flipper.ReplaceEbayPhotoTest do
     assert {:ok, %Photo{ebay_error: nil}} = Drafts.retry_ebay_photo(Drafts.get_draft!(draft.id))
   end
 
+  test "Lifeline discarding an interrupted final attempt makes the replacement retryable" do
+    {draft, photo} = edited_draft("22")
+    {:ok, _photo} = Drafts.choose_edit(photo, true)
+    [job] = all_enqueued(worker: ReplaceEbayPhoto)
+
+    job
+    |> Ecto.Changeset.change(state: "discarded", attempt: job.max_attempts)
+    |> Repo.update!()
+
+    :telemetry.execute([:oban, :plugin, :stop], %{}, %{
+      plugin: Oban.Lifeline,
+      discarded_jobs: [Map.take(job, [:id, :queue])]
+    })
+
+    assert %Photo{ebay_error: error} = Repo.get!(Photo, photo.id)
+    assert is_binary(error)
+    assert {:ok, %Photo{ebay_error: nil}} = Drafts.retry_ebay_photo(Drafts.get_draft!(draft.id))
+    assert_enqueued(worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
+  end
+
   defp edited_draft(ebay_draft_id) do
     {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=#{ebay_draft_id}")
     :ok = perform_job(FetchDraft, %{draft_id: draft.id})
