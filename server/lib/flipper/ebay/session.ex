@@ -1,6 +1,6 @@
 defmodule Flipper.Ebay.Session do
   @moduledoc """
-  Keeps the seller's eBay cookie for Seller Hub requests, and whether eBay rejected it.
+  Keeps the seller's eBay cookie for Seller Hub requests, and why eBay rejected it.
 
   Both are files, shared by every server on the machine. Each server watches them and
   tells its subscribers about a change.
@@ -21,6 +21,25 @@ defmodule Flipper.Ebay.Session do
 
   def status, do: status(cookie())
 
+  @doc """
+  Returns `%{status: status, error: reason}` while eBay rejects the cookie, or nil.
+  """
+  def rejection(cookie \\ cookie())
+
+  def rejection(nil), do: nil
+
+  def rejection(cookie) do
+    digest = digest(cookie)
+
+    with value when is_binary(value) <- read(rejected_path()),
+         {:ok, %{"cookie" => ^digest, "status" => status, "error" => error}} <-
+           Jason.decode(value) do
+      %{status: status, error: error}
+    else
+      _ -> nil
+    end
+  end
+
   def subscribe do
     Phoenix.PubSub.subscribe(Flipper.PubSub, @topic)
   end
@@ -37,9 +56,13 @@ defmodule Flipper.Ebay.Session do
     end
   end
 
-  def reject(cookie) when is_binary(cookie) do
+  @doc """
+  Saves eBay's response to the current cookie. A rejection of any other cookie is ignored.
+  """
+  def reject(cookie, status, error) when is_binary(cookie) do
     if cookie == cookie() do
-      write(rejected_path(), digest(cookie))
+      rejection = %{cookie: digest(cookie), status: status, error: error}
+      write(rejected_path(), Jason.encode!(rejection))
       refresh()
     else
       :ok
@@ -87,9 +110,7 @@ defmodule Flipper.Ebay.Session do
 
   defp status(nil), do: :missing
 
-  defp status(cookie) do
-    if read(rejected_path()) == digest(cookie), do: :rejected, else: :ok
-  end
+  defp status(cookie), do: if(rejection(cookie), do: :rejected, else: :ok)
 
   defp digest(cookie), do: :sha256 |> :crypto.hash(cookie) |> Base.encode16()
 

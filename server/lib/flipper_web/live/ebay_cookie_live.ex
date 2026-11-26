@@ -24,6 +24,9 @@ defmodule FlipperWeb.EbayCookieLive do
         class="m-auto w-full max-w-lg space-y-4 rounded-2xl border border-base-300 bg-base-100 p-6 shadow-2xl"
       >
         <h2 id="ebay-cookie-title" class="text-lg font-semibold">{title(@status)}</h2>
+        <p :if={@rejection} id="ebay-cookie-reason" class="text-sm text-base-content/70">
+          {@rejection.error}
+        </p>
         <.form for={@form} id="ebay-cookie-form" phx-submit="save">
           <.input
             field={@form[:value]}
@@ -67,7 +70,7 @@ defmodule FlipperWeb.EbayCookieLive do
 
     {:ok,
      socket
-     |> assign(:status, Session.status())
+     |> assign_session()
      |> assign(:form, cookie_form(""))}
   end
 
@@ -79,7 +82,7 @@ defmodule FlipperWeb.EbayCookieLive do
 
         {:noreply,
          socket
-         |> assign(:status, Session.status())
+         |> assign_session()
          |> assign(:form, cookie_form(""))
          |> put_flash(:info, "eBay cookie saved.")}
 
@@ -90,10 +93,16 @@ defmodule FlipperWeb.EbayCookieLive do
 
   @impl true
   def handle_info(:ebay_session_changed, socket) do
-    case Session.status() do
-      :ok -> {:noreply, assign(socket, :status, :ok)}
-      status -> {:noreply, socket |> clear_flash() |> assign(:status, status)}
+    case assign_session(socket) do
+      %{assigns: %{status: :ok}} = socket -> {:noreply, socket}
+      socket -> {:noreply, clear_flash(socket)}
     end
+  end
+
+  defp assign_session(socket) do
+    socket
+    |> assign(:status, Session.status())
+    |> assign(:rejection, Session.rejection())
   end
 
   defp title(:missing), do: "Add your eBay cookie"

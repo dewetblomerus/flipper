@@ -88,9 +88,10 @@ defmodule FlipperWeb.EbayCookieLiveTest do
     {:ok, view, _html} = live_isolated(conn, FlipperWeb.EbayCookieLive)
     save_cookie(view, "secret-value")
 
-    :ok = Session.reject("secret-value")
+    :ok = Session.reject("secret-value", 429, "eBay returned 429")
 
     assert has_element?(view, "#ebay-cookie-popover", "eBay rejected the cookie")
+    assert has_element?(view, "#ebay-cookie-reason", "eBay returned 429")
     refute has_element?(view, "#ebay-cookie-saved")
     refute render(view) =~ "secret-value"
   end
