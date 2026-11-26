@@ -31,17 +31,33 @@ defmodule FlipperWeb.EbayCookieLive do
             label="eBay cookie"
             rows="6"
             autocomplete="off"
+            autofocus
             spellcheck="false"
             data-gramm="false"
             data-gramm_editor="false"
             data-enable-grammarly="false"
-            phx-mounted={JS.focus()}
+            phx-hook=".PasteTarget"
           />
           <.button variant="primary" phx-disable-with="Saving...">Save</.button>
         </.form>
       </.focus_wrap>
     </div>
     <.flash id="ebay-cookie-saved" kind={:info} flash={@flash} />
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".PasteTarget">
+      // Keeps the field focused, so Ctrl+V lands in it without a click.
+      export default {
+        mounted() {
+          this.focus = () => this.el.focus()
+          window.addEventListener("focus", this.focus)
+          // A blur with no next target is a click on something that takes no focus.
+          this.el.addEventListener("blur", event => event.relatedTarget || setTimeout(this.focus))
+          this.focus()
+        },
+        destroyed() {
+          window.removeEventListener("focus", this.focus)
+        },
+      }
+    </script>
     """
   end
 

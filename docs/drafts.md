@@ -2,7 +2,9 @@
 
 A person pastes an eBay draft URL. Flipper reads `draft_id` or `draftId` from the query string and creates one draft in `started`. The stored value is `drafts.ebay_draft_id`.
 
-While no eBay cookie is saved, or after eBay redirects it to sign-in, a popover blocks every page and asks for one. Saving it enqueues a job for each failed read, photo replacement, and field removal.
+While no eBay cookie is saved, or after eBay redirects it to sign-in, a popover blocks every page and asks for one. Saving it enqueues a job for each failed read, photo replacement, and field removal. The popover keeps its field focused for pasting. Each server also checks the cookie with eBay when it starts.
+
+The cookie is saved to `~/code/flipper/ebay_cookie`, or `/code/flipper/ebay_cookie` without a home directory. A rejection is saved beside it in `ebay_cookie.rejected`. Every worktree's server uses both files and notices a change within a second.
 
 An Oban job then reads that Seller Hub draft with the saved cookie. It stores the title and downloads every photo at eBay's largest size. Saved photos move the draft to `photos_taken`. A draft with no photos moves to `awaiting_photos`. Refresh on `/drafts/:id` reads the Seller Hub draft again when the draft has no photos.
 

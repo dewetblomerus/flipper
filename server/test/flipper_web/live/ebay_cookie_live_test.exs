@@ -12,13 +12,16 @@ defmodule FlipperWeb.EbayCookieLiveTest do
 
   setup do
     path = Application.fetch_env!(:flipper, :ebay_cookie_path)
+    rejected = path <> ".rejected"
     previous = Application.get_env(:flipper, :ebay_cookie)
     File.rm(path)
+    File.rm(rejected)
     Application.put_env(:flipper, :ebay_cookie, nil)
-    Session.load()
+    Session.refresh()
 
     on_exit(fn ->
       File.rm(path)
+      File.rm(rejected)
 
       if is_binary(previous) and previous != "" do
         Application.put_env(:flipper, :ebay_cookie, previous)
@@ -26,10 +29,28 @@ defmodule FlipperWeb.EbayCookieLiveTest do
         Application.delete_env(:flipper, :ebay_cookie)
       end
 
-      Session.load()
+      Session.refresh()
     end)
 
-    :ok
+    %{path: path}
+  end
+
+  test "the field takes focus", %{conn: conn} do
+    {:ok, view, _html} = live_isolated(conn, FlipperWeb.EbayCookieLive)
+
+    assert has_element?(
+             view,
+             ~s(textarea[autofocus][phx-hook="FlipperWeb.EbayCookieLive.PasteTarget"])
+           )
+  end
+
+  test "closes when another server saves the cookie", %{conn: conn, path: path} do
+    {:ok, view, _html} = live_isolated(conn, FlipperWeb.EbayCookieLive)
+
+    File.write!(path, "other-server")
+    :ok = Session.refresh()
+
+    refute has_element?(view, "#ebay-cookie-popover")
   end
 
   test "asks for a missing cookie and closes once it is saved", %{conn: conn} do

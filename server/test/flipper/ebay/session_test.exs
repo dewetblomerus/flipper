@@ -6,13 +6,16 @@ defmodule Flipper.Ebay.SessionTest do
 
   setup do
     path = Application.fetch_env!(:flipper, :ebay_cookie_path)
+    rejected = path <> ".rejected"
     previous = Application.get_env(:flipper, :ebay_cookie)
     File.rm(path)
+    File.rm(rejected)
     Application.put_env(:flipper, :ebay_cookie, nil)
-    Session.load()
+    Session.refresh()
 
     on_exit(fn ->
       File.rm(path)
+      File.rm(rejected)
 
       if is_binary(previous) and previous != "" do
         Application.put_env(:flipper, :ebay_cookie, previous)
@@ -20,10 +23,10 @@ defmodule Flipper.Ebay.SessionTest do
         Application.delete_env(:flipper, :ebay_cookie)
       end
 
-      Session.load()
+      Session.refresh()
     end)
 
-    %{path: path}
+    %{path: path, rejected: rejected}
   end
 
   test "rejects a blank cookie", %{path: path} do
@@ -40,26 +43,36 @@ defmodule Flipper.Ebay.SessionTest do
     assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o600
   end
 
-  test "loads the file without copying the env cookie to disk", %{path: path} do
+  test "reads the file ahead of the env cookie, without copying that to disk", %{path: path} do
     Application.put_env(:flipper, :ebay_cookie, "env-cookie")
-    assert :ok = Session.load()
     assert Session.cookie() == "env-cookie"
     refute File.exists?(path)
 
-    File.write!(path, "file-cookie")
-    assert :ok = Session.load()
+    File.write!(path, "file-cookie\n")
     assert Session.cookie() == "file-cookie"
-    assert File.read!(path) == "file-cookie"
   end
 
-  test "load reads the saved file back into memory", %{path: path} do
-    assert :ok = Session.set("secret-value")
-    Agent.update(Session, &%{&1 | cookie: nil})
-    assert is_nil(Session.cookie())
+  test "announces a cookie saved by another server", %{path: path} do
+    assert :ok = Session.subscribe()
 
-    assert :ok = Session.load()
-    assert Session.cookie() == "secret-value"
-    assert File.read!(path) == "secret-value"
+    File.write!(path, "other-server")
+
+    assert_receive :ebay_session_changed, 3_000
+    assert Session.status() == :ok
+  end
+
+  test "announces nothing while nothing changes" do
+    assert :ok = Session.subscribe()
+    assert :ok = Session.refresh()
+    refute_received :ebay_session_changed
+  end
+
+  test "saves a rejection for every server, without the cookie", %{rejected: rejected} do
+    assert :ok = Session.set("secret-value")
+    assert :ok = Session.reject("secret-value")
+
+    refute File.read!(rejected) =~ "secret-value"
+    assert Bitwise.band(File.stat!(rejected).mode, 0o777) == 0o600
   end
 
   test "status follows the cookie from missing to saved to rejected" do
@@ -76,7 +89,7 @@ defmodule Flipper.Ebay.SessionTest do
     assert Session.status() == :ok
 
     assert :ok = Session.reject("new-value")
-    assert :ok = Session.load()
+    assert :ok = Session.set("new-value")
     assert Session.status() == :ok
   end
 
@@ -116,6 +129,24 @@ defmodule Flipper.Ebay.SessionTest do
     assert {:error, "eBay asked for a browser check"} =
              Client.fetch("1", plug: {Req.Test, __MODULE__})
 
+    assert Session.status() == :ok
+  end
+
+  test "the startup check rejects a signed out cookie" do
+    assert :ok = Session.set("secret-value")
+    redirect_ebay_to("https://signin.ebay.com/ws/eBayISAPI.dll?SignIn")
+
+    assert {:error, "eBay session is not signed in"} =
+             Client.check_session(plug: {Req.Test, __MODULE__})
+
+    assert Session.status() == :rejected
+  end
+
+  test "the startup check keeps a signed in cookie" do
+    assert :ok = Session.set("secret-value")
+    Req.Test.stub(__MODULE__, &Plug.Conn.send_resp(&1, 200, "drafts"))
+
+    assert :ok = Client.check_session(plug: {Req.Test, __MODULE__})
     assert Session.status() == :ok
   end
 

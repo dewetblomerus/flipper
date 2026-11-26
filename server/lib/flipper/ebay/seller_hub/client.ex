@@ -29,6 +29,16 @@ defmodule Flipper.Ebay.SellerHub.Client do
     {"user-agent", @user_agent}
   ]
 
+  @doc """
+  Opens the drafts page, so a sign-in redirect rejects the cookie.
+  """
+  def check_session(opts \\ []) do
+    with {:ok, cookie} <- signed_in_cookie(opts),
+         {:ok, _body} <- fetch_page(@drafts_url, cookie, Keyword.delete(opts, :cookie), 5) do
+      :ok
+    end
+  end
+
   def fetch(ebay_draft_id, opts \\ []) when is_binary(ebay_draft_id) do
     case cookie_from(opts) do
       cookie when is_binary(cookie) and cookie != "" ->

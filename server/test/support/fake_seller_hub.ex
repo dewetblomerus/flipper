@@ -5,6 +5,8 @@ defmodule Flipper.Ebay.FakeSellerHub do
 
   @jpeg <<0xFF, 0xD8, 0xFF, 0xD9>>
 
+  def check_session, do: :ok
+
   def fetch("0") do
     {:ok, %{title: "Bare item", photo_urls: []}}
   end

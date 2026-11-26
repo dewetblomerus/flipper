@@ -11,7 +11,6 @@ config :flipper,
   ecto_repos: [Flipper.Repo],
   generators: [timestamp_type: :utc_datetime],
   photo_dir: Path.expand("../uploads", __DIR__),
-  ebay_cookie_path: Path.expand("../ebay_cookie", __DIR__),
   photo_editor: Flipper.Photos.GroundingDino,
   photo_edit_python: "python3"
 
