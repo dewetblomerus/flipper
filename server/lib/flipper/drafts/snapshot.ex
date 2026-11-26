@@ -1,6 +1,6 @@
 defmodule Flipper.Drafts.Snapshot do
   @moduledoc """
-  The first valid eBay draft read after photo approval.
+  The eBay draft as read with its photos, before Flipper changes it.
   """
 
   use Ecto.Schema

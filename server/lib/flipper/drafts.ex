@@ -1,8 +1,7 @@
 defmodule Flipper.Drafts do
   @moduledoc """
   Lists drafts, creates them from a pasted eBay draft URL or the Seller Hub drafts list,
-  edits their photos, replaces the approved edit on eBay, and removes the optional fields a
-  person approves.
+  edits their photos, and saves the approved photo and field removals to eBay.
   """
 
   import Ecto.Query
@@ -13,12 +12,10 @@ defmodule Flipper.Drafts do
   alias Flipper.Ebay.SellerHub
   alias Flipper.Ebay.SellerHub.OptionalFields
   alias Flipper.Repo
-  alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
   alias Flipper.Workers.ImportDrafts
-  alias Flipper.Workers.RemoveEbayFields
-  alias Flipper.Workers.ReplaceEbayPhoto
+  alias Flipper.Workers.UpdateEbayDraft
 
   # The job states a person's request can move out of the paced queue.
   @waiting [available: [:queue], scheduled: [:queue], retryable: [:queue]]
@@ -141,9 +138,7 @@ defmodule Flipper.Drafts do
     update_state(draft, "field_removals_approved")
   end
 
-  # A draft with no field to remove finishes without a removal approval.
-  def transition(%Draft{state: state} = draft, :finished)
-      when state in ["photo_edits_approved", "field_removals_approved"] do
+  def transition(%Draft{state: "field_removals_approved"} = draft, :finished) do
     update_state(draft, "finished")
   end
 
@@ -185,91 +180,45 @@ defmodule Flipper.Drafts do
     end
   end
 
-  def replace_on_ebay(%Photo{replaced_on_ebay_at: %DateTime{}}), do: :ok
-
-  def replace_on_ebay(%Photo{} = photo) do
-    photo = Repo.preload(photo, :draft)
-
-    with {:ok, photo} <- upload_edit(photo),
-         :ok <- SellerHub.set_first_photo(photo.draft.ebay_draft_id, photo.edited_ebay_url),
-         {:ok, photo} <- finish_replacement(photo) do
-      broadcast_changed(photo.draft_id)
-      :ok
-    end
-  end
-
   @doc """
-  Keeps a snapshot of the eBay draft and drafts its field removals.
+  Saves the approved photo and field removals to eBay together, and finishes the draft.
   """
-  def draft_field_removals(%Draft{state: "photo_edits_approved"} = draft) do
-    with {:ok, modules} <- SellerHub.read_draft(draft.ebay_draft_id),
-         {:ok, _filled} <- OptionalFields.filled(modules),
-         {:ok, snapshot} <- keep_snapshot(draft, modules),
-         {:ok, filled} <- OptionalFields.filled(snapshot.modules),
-         {:ok, _draft} <- advance(draft.id, after_photo(filled), removal_error: nil) do
+  def update_on_ebay(%Draft{state: "field_removals_approved"} = draft) do
+    with {:ok, photo} <- upload_edit(draft, first_photo(draft.id)),
+         changes = %{photo: picked_url(photo), remove: draft.approved_removals},
+         :ok <- SellerHub.update_draft(draft.ebay_draft_id, changes),
+         {:ok, _draft} <- finish_update(draft.id, photo) do
       broadcast_changed(draft.id)
       :ok
     end
   end
 
-  def draft_field_removals(%Draft{}), do: :ok
+  def update_on_ebay(%Draft{state: "finished"}), do: :ok
+  def update_on_ebay(%Draft{}), do: {:error, :invalid_transition}
 
   @doc """
   Lists the fields the draft's snapshot offers for removal.
   """
-  def proposed_removals(%Draft{id: id}) do
-    with %Snapshot{modules: modules} <- Repo.get_by(Snapshot, draft_id: id),
-         {:ok, filled} <- OptionalFields.filled(modules) do
-      filled
-    else
-      _ -> []
+  def proposed_removals(%Draft{} = draft) do
+    case drafted_removals(draft) do
+      {:ok, removals} -> removals
+      {:error, :removals_not_drafted} -> []
     end
   end
 
-  def approve_field_removals(%Draft{} = draft, names) when is_list(names) do
-    approved = for %{name: name} <- proposed_removals(draft), name in names, do: name
-
-    result =
-      Repo.transaction(fn ->
-        with {:ok, draft} <- transition(lock_draft(draft.id), :field_removals_approved),
-             {:ok, draft} <- update_draft(draft, approved_removals: approved),
-             :ok <- insert_job(RemoveEbayFields.new(%{draft_id: draft.id})) do
-          draft
-        else
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
-
-    with {:ok, draft} <- result do
-      broadcast_changed(draft.id)
-      {:ok, draft}
-    end
-  end
-
-  def remove_ebay_fields(%Draft{state: "field_removals_approved"} = draft) do
-    with :ok <- SellerHub.remove_fields(draft.ebay_draft_id, draft.approved_removals),
-         {:ok, _draft} <- advance(draft.id, :finished, removal_error: nil) do
-      broadcast_changed(draft.id)
-      :ok
-    end
-  end
-
-  def remove_ebay_fields(%Draft{state: "finished"}), do: :ok
-  def remove_ebay_fields(%Draft{}), do: {:error, :invalid_transition}
-
-  def record_removal_error(%Draft{} = draft, reason) when is_binary(reason) do
-    {:ok, _draft} = update_draft(draft, removal_error: reason)
+  def record_ebay_error(%Draft{} = draft, reason) when is_binary(reason) do
+    {:ok, _draft} = update_draft(draft, ebay_error: reason)
     broadcast_changed(draft.id)
     :ok
   end
 
-  def retry_removals(%Draft{id: id}) do
+  def retry_ebay(%Draft{id: id}) do
     result =
       Repo.transaction(fn ->
-        with %Draft{removal_error: error} = draft when is_binary(error) <- lock_draft(id),
-             {:ok, job} <- removal_job(draft),
-             {:ok, draft} <- update_draft(draft, removal_error: nil),
-             :ok <- insert_new_job(job) do
+        with %Draft{state: "field_removals_approved", ebay_error: error} = draft
+             when is_binary(error) <- lock_draft(id),
+             {:ok, draft} <- update_draft(draft, ebay_error: nil),
+             :ok <- insert_new_job(UpdateEbayDraft.new(%{draft_id: id})) do
           draft
         else
           {:error, reason} -> Repo.rollback(reason)
@@ -283,33 +232,11 @@ defmodule Flipper.Drafts do
     end
   end
 
-  def record_ebay_error(%Photo{} = photo, reason) when is_binary(reason) do
-    {:ok, _photo} = update_photo(photo, ebay_error: reason)
-    broadcast_changed(photo.draft_id)
-    :ok
-  end
-
-  def retry_ebay_photo(%Draft{state: "photo_edits_approved", id: id}) do
-    case first_photo(id) do
-      %Photo{use_edited: true, ebay_error: error} = photo when is_binary(error) ->
-        with {:ok, photo} <- clear_error_and_enqueue(photo) do
-          broadcast_changed(id)
-          {:ok, photo}
-        end
-
-      _photo ->
-        {:error, :nothing_to_retry}
-    end
-  end
-
-  def retry_ebay_photo(%Draft{}), do: {:error, :nothing_to_retry}
-
   @doc """
   Records an error on each approved eBay write with no job left to run it.
   """
   def record_lost_ebay_writes do
-    Enum.each(lost_replacements(), &record_ebay_error(&1, @lost_write))
-    Enum.each(lost_removals(), &record_removal_error(&1, @lost_write))
+    Enum.each(lost_updates(), &record_ebay_error(&1, @lost_write))
   end
 
   @doc """
@@ -317,8 +244,7 @@ defmodule Flipper.Drafts do
   """
   def retry_failed do
     Enum.each(failed_fetches(), &retry_fetch/1)
-    Enum.each(failed_replacements(), &retry_ebay_photo/1)
-    Enum.each(failed_removals(), &retry_removals/1)
+    Enum.each(failed_updates(), &retry_ebay/1)
   end
 
   def fetch_from_ebay(%Draft{} = draft) do
@@ -440,13 +366,14 @@ defmodule Flipper.Drafts do
   defp due?(_draft), do: false
 
   # Photos are downloaded only for a draft that also has a SKU.
-  defp save_fetch(draft, %{title: title, sku: sku, photo_urls: urls}) do
+  defp save_fetch(draft, %{title: title, sku: sku, photo_urls: urls, modules: modules}) do
     urls = if sku, do: urls, else: []
 
     fields = [title: blank_to_nil(title), sku: sku, fetch_error: nil]
 
-    with {:ok, files} <- download_photos(draft, urls),
-         {:ok, draft} <- persist_fetch(draft, fields, files) do
+    with {:ok, _removals} <- OptionalFields.filled(modules),
+         {:ok, files} <- download_photos(draft, urls),
+         {:ok, draft} <- persist_fetch(draft, fields, files, modules) do
       broadcast_fetched(draft)
       :ok
     else
@@ -474,9 +401,10 @@ defmodule Flipper.Drafts do
     end)
   end
 
-  defp persist_fetch(draft, fields, files) do
+  defp persist_fetch(draft, fields, files, modules) do
     Repo.transaction(fn ->
       {:ok, draft} = update_draft(draft, fields)
+      save_snapshot(draft, modules)
 
       Enum.with_index(files, 1)
       |> Enum.each(fn {{path, type}, position} ->
@@ -498,6 +426,23 @@ defmodule Flipper.Drafts do
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
+  end
+
+  # Each read replaces the snapshot, so the one that brings the photos stays.
+  defp save_snapshot(%Draft{id: id}, modules) do
+    Repo.insert!(%Snapshot{draft_id: id, modules: modules},
+      on_conflict: {:replace, [:modules, :inserted_at]},
+      conflict_target: :draft_id
+    )
+  end
+
+  defp drafted_removals(%Draft{id: id}) do
+    with %Snapshot{modules: modules} <- Repo.get_by(Snapshot, draft_id: id),
+         {:ok, filled} <- OptionalFields.filled(modules) do
+      {:ok, filled}
+    else
+      _ -> {:error, :removals_not_drafted}
+    end
   end
 
   defp update_state(draft, state) do
@@ -526,14 +471,6 @@ defmodule Flipper.Drafts do
     end
   end
 
-  defp clear_error_and_enqueue(photo) do
-    Repo.transaction(fn ->
-      {:ok, photo} = update_photo(photo, ebay_error: nil)
-      insert_job(ReplaceEbayPhoto.new(%{photo_id: photo.id}))
-      photo
-    end)
-  end
-
   defp clear_and_enqueue(%Draft{id: id}) do
     Repo.transaction(fn ->
       case lock_draft(id) do
@@ -546,11 +483,14 @@ defmodule Flipper.Drafts do
     end)
   end
 
+  # The photo pick also approves every drafted removal.
   defp approve(%Photo{} = photo, use_edited) do
     Repo.transaction(fn ->
-      with {:ok, _draft} <- transition(lock_draft(photo.draft_id), :photo_edits_approved),
+      with {:ok, draft} <- transition(lock_draft(photo.draft_id), :photo_edits_approved),
            {:ok, photo} <- update_photo(photo, use_edited: use_edited),
-           :ok <- enqueue_replace(photo) do
+           {:ok, removals} <- drafted_removals(draft),
+           {:ok, draft} <- transition(draft, :field_removals_drafted),
+           {:ok, _draft} <- approve_field_removals(draft, Enum.map(removals, & &1.name)) do
         photo
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -558,54 +498,19 @@ defmodule Flipper.Drafts do
     end)
   end
 
-  # The edit replaces the photo first. Replacing it then drafts the field removals.
-  defp enqueue_replace(%Photo{use_edited: true, id: id}) do
-    insert_job(ReplaceEbayPhoto.new(%{photo_id: id}))
-  end
-
-  defp enqueue_replace(%Photo{draft_id: draft_id}), do: enqueue_removal_draft(draft_id)
-
-  defp enqueue_removal_draft(draft_id) do
-    insert_job(DraftFieldRemovals.new(%{draft_id: draft_id}))
-  end
-
-  defp finish_replacement(photo) do
-    Repo.transaction(fn ->
-      with {:ok, photo} <- update_photo(photo, replaced_on_ebay_at: DateTime.utc_now()),
-           :ok <- enqueue_removal_draft(photo.draft_id) do
-        photo
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-  end
-
-  defp keep_snapshot(%Draft{id: id}, modules) do
-    Repo.transact(fn ->
-      # Serialize snapshot creation and repair so a retry always keeps a valid snapshot.
-      lock_draft(id)
-
-      case Repo.get_by(Snapshot, draft_id: id) do
-        nil -> Repo.insert(%Snapshot{draft_id: id, modules: modules})
-        %Snapshot{} = snapshot -> repair_snapshot(snapshot, modules)
-      end
-    end)
-  end
-
-  defp repair_snapshot(snapshot, modules) do
-    case OptionalFields.filled(snapshot.modules) do
-      {:ok, _filled} -> {:ok, snapshot}
-      {:error, _reason} -> snapshot |> Ecto.Changeset.change(modules: modules) |> Repo.update()
+  defp approve_field_removals(draft, names) do
+    with {:ok, draft} <- transition(draft, :field_removals_approved),
+         {:ok, draft} <- update_draft(draft, approved_removals: names),
+         :ok <- insert_job(UpdateEbayDraft.new(%{draft_id: draft.id})) do
+      {:ok, draft}
     end
   end
 
-  defp after_photo([]), do: :finished
-  defp after_photo(_filled), do: :field_removals_drafted
-
-  defp advance(draft_id, to, changes) do
+  defp finish_update(draft_id, photo) do
     Repo.transaction(fn ->
-      with {:ok, draft} <- transition(lock_draft(draft_id), to),
-           {:ok, draft} <- update_draft(draft, changes) do
+      with {:ok, draft} <- transition(lock_draft(draft_id), :finished),
+           {:ok, draft} <- update_draft(draft, ebay_error: nil),
+           {:ok, _photo} <- mark_replaced(photo) do
         draft
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -613,15 +518,11 @@ defmodule Flipper.Drafts do
     end)
   end
 
-  defp removal_job(%Draft{state: "photo_edits_approved", id: id}) do
-    {:ok, DraftFieldRemovals.new(%{draft_id: id})}
+  defp mark_replaced(%Photo{use_edited: true} = photo) do
+    update_photo(photo, replaced_on_ebay_at: DateTime.utc_now())
   end
 
-  defp removal_job(%Draft{state: "field_removals_approved", id: id}) do
-    {:ok, RemoveEbayFields.new(%{draft_id: id})}
-  end
-
-  defp removal_job(%Draft{}), do: :nothing_to_retry
+  defp mark_replaced(photo), do: {:ok, photo}
 
   defp update_draft(draft, changes) do
     draft
@@ -629,17 +530,21 @@ defmodule Flipper.Drafts do
     |> Repo.update()
   end
 
-  defp upload_edit(%Photo{edited_ebay_url: url} = photo) when is_binary(url), do: {:ok, photo}
-
-  defp upload_edit(%Photo{} = photo) do
+  # Only a picked edit is uploaded, and a retry reuses the upload.
+  defp upload_edit(draft, %Photo{use_edited: true, edited_ebay_url: nil} = photo) do
     with {:ok, path, type} <- photo_file(photo, :edited) |> found(),
-         {:ok, url} <- SellerHub.upload_photo(photo.draft.ebay_draft_id, path, type) do
+         {:ok, url} <- SellerHub.upload_photo(draft.ebay_draft_id, path, type) do
       update_photo(photo, edited_ebay_url: url)
     end
   end
 
+  defp upload_edit(_draft, photo), do: {:ok, photo}
+
   defp found({:ok, path, type}), do: {:ok, path, type}
   defp found(:error), do: {:error, "edited photo is missing"}
+
+  defp picked_url(%Photo{use_edited: true, edited_ebay_url: url}), do: url
+  defp picked_url(_photo), do: nil
 
   defp update_photo(photo, changes) do
     photo
@@ -816,51 +721,22 @@ defmodule Flipper.Drafts do
     Repo.all(from d in Draft, where: not is_nil(d.fetch_error), order_by: d.id)
   end
 
-  defp failed_replacements do
-    Repo.all(
-      from d in Draft,
-        join: p in assoc(d, :photos),
-        where: not is_nil(p.ebay_error),
-        distinct: true,
-        order_by: d.id
-    )
+  defp failed_updates do
+    Repo.all(from d in Draft, where: not is_nil(d.ebay_error), order_by: d.id)
   end
 
-  defp failed_removals do
-    Repo.all(from d in Draft, where: not is_nil(d.removal_error), order_by: d.id)
-  end
-
-  defp lost_replacements do
+  defp lost_updates do
     jobs =
-      from j in live_jobs(ReplaceEbayPhoto),
-        where: fragment("(?->>'photo_id')::bigint", j.args) == parent_as(:photo).id
-
-    Repo.all(
-      from p in Photo,
-        as: :photo,
-        join: d in assoc(p, :draft),
-        where: d.state == "photo_edits_approved" and p.use_edited,
-        where: is_nil(p.replaced_on_ebay_at) and is_nil(p.ebay_error),
-        where: not exists(jobs)
-    )
-  end
-
-  defp lost_removals do
-    jobs =
-      from j in live_jobs(RemoveEbayFields),
+      from j in Oban.Job,
+        where: j.worker == ^Oban.Worker.to_string(UpdateEbayDraft) and j.state not in @ended,
         where: fragment("(?->>'draft_id')::bigint", j.args) == parent_as(:draft).id
 
     Repo.all(
       from d in Draft,
         as: :draft,
-        where: d.state == "field_removals_approved" and is_nil(d.removal_error),
+        where: d.state == "field_removals_approved" and is_nil(d.ebay_error),
         where: not exists(jobs)
     )
-  end
-
-  defp live_jobs(worker) do
-    from j in Oban.Job,
-      where: j.worker == ^Oban.Worker.to_string(worker) and j.state not in @ended
   end
 
   defp retry_fetch(draft) do

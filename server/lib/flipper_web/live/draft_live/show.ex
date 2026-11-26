@@ -39,118 +39,89 @@ defmodule FlipperWeb.DraftLive.Show do
 
       <div :if={ebay_status(@draft)} class="flex items-center gap-4">
         <p id="ebay-status">{ebay_status(@draft)}</p>
-        <.button :if={retry_ebay?(@draft)} id="retry-ebay-photo" phx-click="retry_ebay_photo">
-          Retry
-        </.button>
-        <.button :if={@draft.removal_error} id="retry-removals" phx-click="retry_removals">
+        <.button :if={@draft.ebay_error} id="retry-ebay" phx-click="retry_ebay">
           Retry
         </.button>
       </div>
 
+      <div
+        :for={photo <- Enum.take(@draft.photos, 1)}
+        id={"photo-#{photo.id}"}
+        class="grid grid-cols-2 gap-4"
+      >
+        <%= if photo.edited_path do %>
+          <button
+            type="button"
+            id={"photo-#{photo.id}-original"}
+            phx-click="choose_edit"
+            phx-value-id={photo.id}
+            phx-value-use_edited="false"
+            aria-pressed={to_string(photo.use_edited == false)}
+            disabled={approved?(@draft)}
+            class={[
+              "rounded-xl border border-base-300 p-2 text-left transition enabled:hover:border-primary",
+              photo.use_edited == false && "ring-2 ring-primary"
+            ]}
+          >
+            <img
+              src={~p"/photos/#{photo}"}
+              alt={"Original #{photo.position}"}
+              class="aspect-square w-full rounded-lg bg-base-200 object-contain"
+            />
+            <span class="mt-2 block text-sm">Original</span>
+          </button>
+          <button
+            type="button"
+            id={"photo-#{photo.id}-edited"}
+            phx-click="choose_edit"
+            phx-value-id={photo.id}
+            phx-value-use_edited="true"
+            aria-pressed={to_string(photo.use_edited == true)}
+            disabled={approved?(@draft)}
+            class={[
+              "rounded-xl border border-base-300 p-2 text-left transition enabled:hover:border-primary",
+              photo.use_edited == true && "ring-2 ring-primary"
+            ]}
+          >
+            <img
+              src={~p"/photos/#{photo}/edited"}
+              alt={"Edited #{photo.position}"}
+              class="aspect-square w-full rounded-lg bg-base-200 object-contain"
+            />
+            <span class="mt-2 block text-sm">Edited</span>
+          </button>
+        <% else %>
+          <div id={"photo-#{photo.id}-original"}>
+            <img
+              src={~p"/photos/#{photo}"}
+              alt={"Original #{photo.position}"}
+              class="aspect-square w-full rounded-lg bg-base-200 object-contain"
+            />
+            <span class="mt-2 block text-sm">Original</span>
+          </div>
+          <div
+            id={"photo-#{photo.id}-edited"}
+            class="flex items-center justify-center gap-2 rounded-xl border border-dashed border-base-300"
+          >
+            <.icon name="hero-arrow-path" class="size-4 motion-safe:animate-spin" />
+            <span class="text-sm">Editing</span>
+          </div>
+        <% end %>
+      </div>
+
       <section
-        :if={@removals != []}
+        :if={@draft.photos != [] and @removals != []}
         id="field-removals"
-        class="mb-8 space-y-3 rounded-xl border border-base-300 p-4"
+        class="mt-8 space-y-3 rounded-xl border border-base-300 p-4"
       >
         <h2 class="text-lg font-semibold">{removals_title(@draft)}</h2>
-        <p :if={reviewing?(@draft)} class="text-sm text-base-content/70">
-          Approving removes the ticked fields from the eBay draft. Untick a field to keep it.
+        <p :if={not approved?(@draft)} class="text-sm text-base-content/70">
+          Picking a photo also removes these fields from the eBay draft.
         </p>
-        <.form
-          for={@removal_form}
-          id="field-removals-form"
-          phx-change="select_removals"
-          phx-submit="approve_removals"
-        >
-          <.input
-            :for={{field, index} <- Enum.with_index(@removals)}
-            type="checkbox"
-            id={"removal-#{index}"}
-            name={"remove[#{index}]"}
-            label={"#{field.label}: #{field.value}"}
-            checked={field.name in @selected}
-            disabled={not reviewing?(@draft)}
-          />
-          <.button :if={reviewing?(@draft)} id="approve-removals" variant="primary">
-            Approve removals
-          </.button>
-        </.form>
+        <ul class="list-disc space-y-1 pl-5 text-sm">
+          <li :for={field <- @removals}>{field.label}: {field.value}</li>
+        </ul>
       </section>
-
-      <ul :if={@draft.photos != []} id="draft-photos" class="space-y-8">
-        <li
-          :for={photo <- @draft.photos}
-          id={"photo-#{photo.id}"}
-          class={[first_photo?(@draft, photo) && "grid grid-cols-2 gap-4"]}
-        >
-          <%= if first_photo?(@draft, photo) && photo.edited_path do %>
-            <button
-              type="button"
-              id={"photo-#{photo.id}-original"}
-              phx-click="choose_edit"
-              phx-value-id={photo.id}
-              phx-value-use_edited="false"
-              aria-pressed={to_string(photo.use_edited == false)}
-              disabled={approved?(@draft)}
-              class={[
-                "rounded-xl border border-base-300 p-2 text-left transition enabled:hover:border-primary",
-                photo.use_edited == false && "ring-2 ring-primary"
-              ]}
-            >
-              <img
-                src={~p"/photos/#{photo}"}
-                alt={"Original #{photo.position}"}
-                class="aspect-square w-full rounded-lg bg-base-200 object-contain"
-              />
-              <span class="mt-2 block text-sm">Original</span>
-            </button>
-            <button
-              type="button"
-              id={"photo-#{photo.id}-edited"}
-              phx-click="choose_edit"
-              phx-value-id={photo.id}
-              phx-value-use_edited="true"
-              aria-pressed={to_string(photo.use_edited == true)}
-              disabled={approved?(@draft)}
-              class={[
-                "rounded-xl border border-base-300 p-2 text-left transition enabled:hover:border-primary",
-                photo.use_edited == true && "ring-2 ring-primary"
-              ]}
-            >
-              <img
-                src={~p"/photos/#{photo}/edited"}
-                alt={"Edited #{photo.position}"}
-                class="aspect-square w-full rounded-lg bg-base-200 object-contain"
-              />
-              <span class="mt-2 block text-sm">Edited</span>
-            </button>
-          <% else %>
-            <%= if first_photo?(@draft, photo) do %>
-              <div id={"photo-#{photo.id}-original"}>
-                <img
-                  src={~p"/photos/#{photo}"}
-                  alt={"Original #{photo.position}"}
-                  class="aspect-square w-full rounded-lg bg-base-200 object-contain"
-                />
-                <span class="mt-2 block text-sm">Original</span>
-              </div>
-              <div
-                id={"photo-#{photo.id}-edited"}
-                class="flex items-center justify-center gap-2 rounded-xl border border-dashed border-base-300"
-              >
-                <.icon name="hero-arrow-path" class="size-4 motion-safe:animate-spin" />
-                <span class="text-sm">Editing</span>
-              </div>
-            <% else %>
-              <img
-                src={~p"/photos/#{photo}"}
-                alt={"Photo #{photo.position}"}
-                class="w-full max-w-md rounded-lg"
-              />
-            <% end %>
-          <% end %>
-        </li>
-      </ul>
     </Layouts.app>
     """
   end
@@ -169,7 +140,6 @@ defmodule FlipperWeb.DraftLive.Show do
      socket
      |> assign(:page_title, "Show Draft")
      |> assign(:refreshing, false)
-     |> assign(:removal_form, to_form(%{}, as: :remove))
      |> assign_draft(draft)}
   end
 
@@ -201,19 +171,8 @@ defmodule FlipperWeb.DraftLive.Show do
   end
 
   @impl true
-  def handle_event("retry_ebay_photo", _params, socket) do
-    case Drafts.retry_ebay_photo(socket.assigns.draft) do
-      {:ok, _photo} ->
-        {:noreply, reload(socket)}
-
-      {:error, _reason} ->
-        {:noreply, put_flash(socket, :error, "Nothing to retry.")}
-    end
-  end
-
-  @impl true
-  def handle_event("retry_removals", _params, socket) do
-    case Drafts.retry_removals(socket.assigns.draft) do
+  def handle_event("retry_ebay", _params, socket) do
+    case Drafts.retry_ebay(socket.assigns.draft) do
       {:ok, _draft} ->
         {:noreply, reload(socket)}
 
@@ -222,27 +181,6 @@ defmodule FlipperWeb.DraftLive.Show do
 
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Nothing to retry.")}
-    end
-  end
-
-  @impl true
-  def handle_event("select_removals", params, socket) do
-    {:noreply, assign(socket, :selected, ticked(socket.assigns.removals, params))}
-  end
-
-  @impl true
-  def handle_event("approve_removals", params, socket) do
-    names = ticked(socket.assigns.removals, params)
-
-    case Drafts.approve_field_removals(socket.assigns.draft, names) do
-      {:ok, _draft} ->
-        {:noreply, reload(socket)}
-
-      {:error, :invalid_transition} ->
-        {:noreply, put_flash(socket, :error, "Those removals are already approved.")}
-
-      {:error, _reason} ->
-        {:noreply, put_flash(socket, :error, "Could not approve the removals.")}
     end
   end
 
@@ -257,9 +195,6 @@ defmodule FlipperWeb.DraftLive.Show do
     end
   end
 
-  defp first_photo?(%{photos: [first | _]}, photo), do: photo.id == first.id
-  defp first_photo?(_draft, _photo), do: false
-
   defp redo_edit?(%{photos: [first | _]} = draft) do
     is_binary(first.edited_path) and not approved?(draft)
   end
@@ -268,81 +203,32 @@ defmodule FlipperWeb.DraftLive.Show do
 
   defp approved?(draft), do: draft.state in @photo_locked
 
-  defp reviewing?(draft), do: draft.state == "field_removals_drafted"
-
-  defp removals_title(%{state: "finished"}), do: "Ticked fields were removed"
+  defp removals_title(%{state: "finished"}), do: "Removed fields"
   defp removals_title(_draft), do: "Fields to remove"
 
-  defp ebay_status(%{state: "photo_edits_approved", removal_error: error})
+  defp ebay_status(%{state: "field_removals_approved", ebay_error: error})
        when is_binary(error) do
-    "Reading the eBay draft failed: #{error}"
+    "Updating eBay failed: #{error}"
   end
 
-  defp ebay_status(%{state: "photo_edits_approved", photos: [%{use_edited: true} = first | _]}) do
-    cond do
-      first.replaced_on_ebay_at -> "Replaced on eBay."
-      first.ebay_error -> "eBay replacement failed: #{first.ebay_error}"
-      true -> "Replacing on eBay."
-    end
-  end
-
-  defp ebay_status(%{state: "photo_edits_approved"}), do: "Reading the eBay draft."
-
-  defp ebay_status(%{state: "field_removals_approved", removal_error: error})
-       when is_binary(error) do
-    "Removing fields failed: #{error}"
-  end
-
-  defp ebay_status(%{state: "field_removals_approved"}), do: "Removing fields on eBay."
+  defp ebay_status(%{state: "field_removals_approved"}), do: "Updating the eBay draft."
   defp ebay_status(%{state: "finished"}), do: "eBay draft updated."
   defp ebay_status(_draft), do: nil
 
   defp assign_draft(socket, draft) do
-    removals = removals(draft)
-
     socket
-    |> assign(:selected, selected(socket.assigns, draft, removals))
-    |> assign(:removals, removals)
+    |> assign(:removals, removals(draft))
     |> assign(:draft, draft)
   end
 
   defp reload(socket), do: assign_draft(socket, Drafts.get_draft!(socket.assigns.draft.id))
 
-  defp removals(%{state: state} = draft)
-       when state in ["field_removals_drafted", "field_removals_approved", "finished"] do
-    Drafts.proposed_removals(draft)
+  # Once the removals are approved, only those are listed.
+  defp removals(%{approved_removals: nil} = draft), do: Drafts.proposed_removals(draft)
+
+  defp removals(draft) do
+    Enum.filter(Drafts.proposed_removals(draft), &(&1.name in draft.approved_removals))
   end
-
-  defp removals(_draft), do: []
-
-  # Every field starts ticked. A reload during the review keeps the person's ticks.
-  defp selected(
-         %{draft: %{state: "field_removals_drafted"}, selected: selected},
-         %{state: "field_removals_drafted"},
-         _removals
-       ) do
-    selected
-  end
-
-  defp selected(_assigns, %{state: "field_removals_drafted"}, removals) do
-    Enum.map(removals, & &1.name)
-  end
-
-  defp selected(_assigns, draft, _removals), do: draft.approved_removals || []
-
-  defp ticked(removals, params) do
-    ticks = Map.get(params, "remove", %{})
-
-    for {field, index} <- Enum.with_index(removals),
-        ticks[to_string(index)] == "true",
-        do: field.name
-  end
-
-  defp retry_ebay?(%{state: "photo_edits_approved", photos: [first | _]}) do
-    first.use_edited == true and is_binary(first.ebay_error)
-  end
-
-  defp retry_ebay?(_draft), do: false
 
   defp save_choice(socket, draft, photo, use_edited) do
     case Drafts.choose_edit(photo, use_edited) do

@@ -12,7 +12,9 @@ defmodule Flipper.Ebay.FakeSellerHub do
   end
 
   def fetch(ebay_draft_id) do
-    Process.get({:ebay_draft, ebay_draft_id}) || read(ebay_draft_id)
+    with {:ok, read} <- Process.get({:ebay_draft, ebay_draft_id}) || read(ebay_draft_id) do
+      {:ok, Map.put_new(read, :modules, modules(ebay_draft_id))}
+    end
   end
 
   defp read("0") do
@@ -60,24 +62,10 @@ defmodule Flipper.Ebay.FakeSellerHub do
     {:ok, "https://i.ebayimg.com/images/g/new/s-l1600.png"}
   end
 
-  def set_first_photo("500", _url), do: {:error, "eBay returned 500"}
+  def update_draft("500", _changes), do: {:error, "eBay returned 500"}
 
-  def set_first_photo(ebay_draft_id, url) do
-    send(self(), {:ebay_first_photo_set, ebay_draft_id, url})
-    :ok
-  end
-
-  def read_draft("502"), do: {:error, "eBay returned 502"}
-
-  def read_draft(ebay_draft_id) do
-    send(self(), {:ebay_draft_read, ebay_draft_id})
-    {:ok, modules(ebay_draft_id)}
-  end
-
-  def remove_fields("501", _names), do: {:error, "eBay returned 501"}
-
-  def remove_fields(ebay_draft_id, names) do
-    send(self(), {:ebay_fields_removed, ebay_draft_id, names})
+  def update_draft(ebay_draft_id, changes) do
+    send(self(), {:ebay_draft_updated, ebay_draft_id, changes})
     :ok
   end
 
