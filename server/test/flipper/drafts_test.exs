@@ -60,6 +60,7 @@ defmodule Flipper.DraftsTest do
 
     draft = Drafts.get_draft!(draft.id)
     assert draft.title == "Vintage lamp"
+    assert draft.sku == "LAMP-1"
     assert draft.state == "photos_taken"
     assert draft.fetch_error == nil
     assert [photo] = draft.photos
@@ -74,14 +75,56 @@ defmodule Flipper.DraftsTest do
     assert [_] = all_enqueued(worker: FetchDraft, args: %{draft_id: draft.id})
   end
 
-  test "fetch_from_ebay with no photos moves the draft to awaiting_photos" do
+  test "a draft with a SKU and no photos waits in awaiting_sku" do
     assert {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=0")
     assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
 
     draft = Drafts.get_draft!(draft.id)
+    assert draft.state == "awaiting_sku"
     assert draft.title == "Bare item"
-    assert draft.state == "awaiting_photos"
+    assert draft.sku == "BARE-1"
     assert draft.photos == []
+    assert [] = all_enqueued(worker: EditPhoto)
+  end
+
+  test "photos without a SKU wait in awaiting_sku until a refresh finds one" do
+    assert {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=11")
+    assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+
+    draft = Drafts.get_draft!(draft.id)
+    assert draft.state == "awaiting_sku"
+    assert draft.title == "Unlabelled lamp"
+    assert draft.sku == nil
+    assert draft.photos == []
+    assert [] = all_enqueued(worker: EditPhoto)
+
+    Process.put(
+      {:ebay_draft, "11"},
+      {:ok,
+       %{
+         title: "Labelled lamp",
+         sku: "A-2",
+         photo_urls: ["https://i.ebayimg.com/images/g/abc/s-l1600.jpg"]
+       }}
+    )
+
+    discard_available_jobs()
+    assert {:ok, _draft} = Drafts.refresh(draft)
+    assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+
+    draft = Drafts.get_draft!(draft.id)
+    assert draft.state == "photos_taken"
+    assert draft.sku == "A-2"
+    assert [photo] = draft.photos
+    assert_enqueued(worker: EditPhoto, args: %{photo_id: photo.id})
+  end
+
+  test "a draft without both photos and a SKU cannot reach photos_taken" do
+    assert {:ok, draft} = Drafts.paste_url(@url)
+    assert {:error, :invalid_transition} = Drafts.transition(draft, :photos_taken)
+
+    labelled = Repo.update!(Ecto.Changeset.change(draft, sku: "A-1", state: "awaiting_sku"))
+    assert {:error, :invalid_transition} = Drafts.transition(labelled, :photos_taken)
     assert [] = all_enqueued(worker: EditPhoto)
   end
 
@@ -138,8 +181,9 @@ defmodule Flipper.DraftsTest do
 
     assert :ok = Drafts.retry_failed()
 
-    assert [_, _] = all_enqueued(queue: :ebay)
-    assert_enqueued(queue: :ebay, worker: FetchDraft, args: %{draft_id: unread.id})
+    assert [_] = all_enqueued(queue: :ebay)
+    assert [_] = all_enqueued(queue: :ebay_automated)
+    assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: unread.id})
     assert_enqueued(queue: :ebay, worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
     assert Repo.get!(Draft, unread.id).fetch_error == nil
     assert Drafts.get_photo!(photo.id).ebay_error == nil

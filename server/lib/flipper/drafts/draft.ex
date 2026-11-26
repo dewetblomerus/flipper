@@ -5,8 +5,10 @@ defmodule Flipper.Drafts.Draft do
   schema "drafts" do
     field :ebay_draft_id, :string
     field :title, :string
+    field :sku, :string
     field :state, :string
     field :fetch_error, :string
+    field :import_read_at, :utc_datetime_usec
     field :approved_removals, {:array, :string}
     field :removal_error, :string
     has_many :photos, Flipper.Drafts.Photo

@@ -28,6 +28,7 @@ defmodule FlipperWeb.DraftLive.Show do
       <.list>
         <:item title="Ebay draft">{@draft.ebay_draft_id}</:item>
         <:item title="Title">{@draft.title}</:item>
+        <:item title="Custom label (SKU)">{@draft.sku}</:item>
         <:item title="State">{@draft.state}</:item>
       </.list>
 

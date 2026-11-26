@@ -122,32 +122,72 @@ defmodule Flipper.Ebay.SessionTest do
     assert Session.status() == :rejected
   end
 
-  test "a browser check leaves the cookie alone" do
+  test "a browser check redirect rejects the cookie" do
     assert :ok = Session.set("secret-value")
     redirect_ebay_to("https://www.ebay.com/splashui/challenge?ap=1")
 
     assert {:error, "eBay asked for a browser check"} =
              Client.fetch("1", plug: {Req.Test, __MODULE__})
 
-    assert Session.status() == :ok
+    assert Session.status() == :rejected
   end
 
-  test "the startup check rejects a signed out cookie" do
+  test "a browser check page rejects the cookie" do
     assert :ok = Session.set("secret-value")
-    redirect_ebay_to("https://signin.ebay.com/ws/eBayISAPI.dll?SignIn")
+    answer_with(200, "Pardon Our Interruption")
 
-    assert {:error, "eBay session is not signed in"} =
-             Client.check_session(plug: {Req.Test, __MODULE__})
+    assert {:error, "eBay asked for a browser check"} =
+             Client.fetch("1", plug: {Req.Test, __MODULE__})
 
     assert Session.status() == :rejected
   end
 
-  test "the startup check keeps a signed in cookie" do
-    assert :ok = Session.set("secret-value")
-    Req.Test.stub(__MODULE__, &Plug.Conn.send_resp(&1, 200, "drafts"))
+  test "a refusal or a rate limit rejects the cookie" do
+    for status <- [403, 429] do
+      assert :ok = Session.set("secret-value")
+      answer_with(status, "")
 
-    assert :ok = Client.check_session(plug: {Req.Test, __MODULE__})
+      assert {:error, "eBay returned " <> _} = Client.fetch("1", plug: {Req.Test, __MODULE__})
+      assert Session.status() == :rejected
+    end
+  end
+
+  test "a server error keeps the cookie" do
+    assert :ok = Session.set("secret-value")
+    answer_with(500, "")
+
+    assert {:error, "eBay returned 500"} = Client.fetch("1", plug: {Req.Test, __MODULE__})
     assert Session.status() == :ok
+  end
+
+  test "listing drafts rejects a signed out cookie" do
+    assert :ok = Session.set("secret-value")
+    redirect_ebay_to("https://signin.ebay.com/ws/eBayISAPI.dll?SignIn")
+
+    assert {:error, "eBay session is not signed in"} =
+             Client.drafts(plug: {Req.Test, __MODULE__})
+
+    assert Session.status() == :rejected
+  end
+
+  test "listing drafts asks for 200 and keeps a signed in cookie" do
+    assert :ok = Session.set("secret-value")
+    parent = self()
+
+    Req.Test.stub(__MODULE__, fn conn ->
+      send(parent, {:requested, conn.request_path, conn.query_string})
+      Plug.Conn.send_resp(conn, 200, "<html></html>")
+    end)
+
+    assert {:error, "eBay drafts page had no list" <> _} =
+             Client.drafts(plug: {Req.Test, __MODULE__})
+
+    assert_received {:requested, "/sh/lst/drafts", "limit=200"}
+    assert Session.status() == :ok
+  end
+
+  defp answer_with(status, body) do
+    Req.Test.stub(__MODULE__, &Plug.Conn.send_resp(&1, status, body))
   end
 
   defp redirect_ebay_to(location) do

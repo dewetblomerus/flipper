@@ -16,9 +16,16 @@ config :flipper,
 
 config :flipper, Oban,
   repo: Flipper.Repo,
-  # Every worker that calls eBay uses the ebay queue. Its limit of 1 keeps requests serial.
-  queues: [ebay: 1, photos: 1],
-  plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
+  # A person's eBay work runs in ebay, unattended work in ebay_automated. The cooldown
+  # jitters ebay_automated job starts, at least 5s apart.
+  queues: [
+    ebay: 1,
+    ebay_automated: [limit: 1, dispatch_cooldown: :timer.seconds(10)],
+    photos: 1
+  ],
+  cron: [crontab: [{"@hourly", Flipper.Workers.ImportDrafts}]],
+  pruner: [max_age: {7, :days}],
+  lifeline: [rescue_after: {30, :minutes}]
 
 # Configure the endpoint
 config :flipper, FlipperWeb.Endpoint,

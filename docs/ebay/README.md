@@ -4,6 +4,7 @@ Seller Hub's listing page reads and saves drafts through private endpoints. eBay
 
 Facts here come from live eBay on 2026-11-25. "From the page" marks what the page's HTML or JavaScript shows without a test save. "From the client" marks what Flipper's [client](../../server/lib/flipper/ebay/seller_hub/client.ex) handles.
 
+- [Listing drafts](list.md)
 - [Reading a draft](read.md)
 - [Fields](fields.md)
 - [Saving](save.md)
