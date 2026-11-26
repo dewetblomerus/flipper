@@ -3,7 +3,7 @@ defmodule Flipper.Ebay.DraftListTest do
 
   alias Flipper.Ebay.SellerHub.DraftList
 
-  @headers ~w(image title listingSKU)
+  @headers ~w(image title listingSKU createdDate)
   @photo ~s(<img loading=lazy src=//i.ebayimg.com/00/s/abc/$_1.JPG alt="Draft photo">)
   @placeholder ~s(<svg class="icon icon-pictures-null"></svg>)
 
@@ -16,9 +16,34 @@ defmodule Flipper.Ebay.DraftListTest do
     assert DraftList.parse(page(@headers, rows)) ==
              {:ok,
               [
-                %{ebay_draft_id: "111", title: "Lamp & shade", sku: "A-1", photo?: true},
-                %{ebay_draft_id: "222", title: "", sku: "", photo?: false}
+                %{
+                  ebay_draft_id: "111",
+                  title: "Lamp & shade",
+                  sku: "A-1",
+                  photo?: true,
+                  listed_at: nil
+                },
+                %{ebay_draft_id: "222", title: "", sku: "", photo?: false, listed_at: nil}
               ]}
+  end
+
+  test "reads the created date as Pacific time in the latest past year" do
+    now = ~U[2026-11-26 04:00:00.000000Z]
+
+    dates = [
+      {"Nov 24 at 7:24pm PST", ~U[2026-11-25 03:24:00.000000Z]},
+      {"Sep 3 at 12:05am PDT", ~U[2026-09-03 07:05:00.000000Z]},
+      {"Nov 25 at 12:30pm PST", ~U[2026-11-25 20:30:00.000000Z]},
+      {"Dec 20 at 9:00am PST", ~U[2025-12-20 17:00:00.000000Z]},
+      {"yesterday", nil},
+      {"", nil}
+    ]
+
+    for {text, expected} <- dates do
+      rows = [row("111", "Lamp", "", @placeholder, text)]
+
+      assert {:ok, [%{listed_at: ^expected}]} = DraftList.parse(page(@headers, rows), now)
+    end
   end
 
   test "an empty list has no drafts" do
@@ -52,11 +77,12 @@ defmodule Flipper.Ebay.DraftListTest do
   end
 
   # The page comments around each value, as its renderer does.
-  defp row(id, title, sku, image) do
+  defp row(id, title, sku, image, created \\ "") do
     ~s(<tbody><tr data-id=#{id} data-site=0 class=grid-row>) <>
       cell("image", image) <>
       cell("title", "<!--F#1-->#{title}<!--F/-->") <>
       cell("listingSKU", "<!--F#1-->#{sku}<!--F/-->") <>
+      cell("createdDate", "<!--F#1-->#{created}<!--F/-->") <>
       "</tr></tbody>"
   end
 

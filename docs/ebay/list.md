@@ -8,6 +8,7 @@ The HTML holds one table. Each draft is a `tr.grid-row` whose `data-id` is the d
 | --- | --- |
 | Title, which may be empty | `title` |
 | Custom label (SKU), empty when unset | `listingSKU` |
+| Created, as `Nov 24 at 7:24pm PST`, with no year | `createdDate` |
 | Photo: an `img` on `ebayimg.com`, or a placeholder icon | `image` |
 
 - The page's data includes `totalRecords`, `limit`, and `offset`.

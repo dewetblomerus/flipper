@@ -10,10 +10,25 @@ defmodule Flipper.DraftsTest do
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022&ReturnURL=https%3A%2F%2Fwww.ebay.com%2Fsh%2Flst%2Fdrafts"
 
-  test "list_drafts returns newest first" do
-    assert {:ok, older} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=1")
-    assert {:ok, newer} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=2")
-    assert Enum.map(Drafts.list_drafts(), & &1.id) == [newer.id, older.id]
+  test "list_drafts puts the furthest along first, then the oldest listing" do
+    undated = listed_draft(1, "photos_taken", nil)
+    newer = listed_draft(2, "photos_taken", ~U[2026-11-20 00:00:00.000000Z])
+    older = listed_draft(3, "photos_taken", ~U[2026-11-10 00:00:00.000000Z])
+    waiting = listed_draft(4, "awaiting_sku", ~U[2026-11-01 00:00:00.000000Z])
+    finished = listed_draft(5, "finished", ~U[2026-11-24 00:00:00.000000Z])
+
+    assert Enum.map(Drafts.list_drafts(), & &1.id) ==
+             Enum.map([finished, older, newer, undated, waiting], & &1.id)
+  end
+
+  test "list_drafts ranks every state" do
+    drafts =
+      Draft.states()
+      |> Enum.with_index(1)
+      |> Enum.map(fn {state, number} -> listed_draft(number, state, nil) end)
+
+    assert Enum.map(Drafts.list_drafts(), & &1.id) ==
+             drafts |> Enum.reverse() |> Enum.map(& &1.id)
   end
 
   test "paste_url creates a started draft and enqueues a fetch" do
@@ -188,6 +203,13 @@ defmodule Flipper.DraftsTest do
     assert Repo.get!(Draft, unread.id).fetch_error == nil
     assert Drafts.get_photo!(photo.id).ebay_error == nil
     assert_received {:draft_changed, _}
+  end
+
+  defp listed_draft(ebay_draft_id, state, listed_at) do
+    %Draft{}
+    |> Draft.create_changeset(to_string(ebay_draft_id))
+    |> Ecto.Changeset.change(state: state, listed_at: listed_at)
+    |> Repo.insert!()
   end
 
   defp discard_available_jobs do

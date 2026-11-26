@@ -51,6 +51,19 @@ defmodule Flipper.ImportDraftsTest do
     assert [] = all_enqueued(worker: FetchDraft)
   end
 
+  test "saves each listing's age, on new drafts and known ones" do
+    created = ~U[2026-11-10 17:00:00.000000Z]
+    {:ok, pasted} = paste("1")
+    list([listed("1", "", false, created), listed("22", "", false, created)])
+
+    assert :ok = perform_job(ImportDrafts, %{})
+    assert [created, created] == Repo.all(from d in Draft, select: d.listed_at)
+
+    list([listed("1", "", false), listed("22", "", false)])
+    assert :ok = perform_job(ImportDrafts, %{})
+    assert Repo.get!(Draft, pasted.id).listed_at == created
+  end
+
   test "a paste or a refresh takes over a waiting import" do
     list([listed("1", "A-1"), listed("22", "A-2")])
     assert :ok = perform_job(ImportDrafts, %{})
@@ -165,8 +178,14 @@ defmodule Flipper.ImportDraftsTest do
     Drafts.get_draft!(draft.id)
   end
 
-  defp listed(ebay_draft_id, sku, photo? \\ true) do
-    %{ebay_draft_id: ebay_draft_id, title: "Listed #{ebay_draft_id}", sku: sku, photo?: photo?}
+  defp listed(ebay_draft_id, sku, photo? \\ true, listed_at \\ nil) do
+    %{
+      ebay_draft_id: ebay_draft_id,
+      title: "Listed #{ebay_draft_id}",
+      sku: sku,
+      photo?: photo?,
+      listed_at: listed_at
+    }
   end
 
   defp list(drafts), do: Process.put(:ebay_drafts, {:ok, drafts})

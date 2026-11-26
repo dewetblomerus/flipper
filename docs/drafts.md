@@ -36,7 +36,7 @@ See [eBay draft API](ebay/README.md).
 
 Pasting an id that already exists opens that draft.
 
-`/drafts` lists each draft with its first photo and updates as drafts change. Refresh Drafts queues an import in the `ebay` queue, taking over one waiting in the paced queue. One import job waits or runs at a time. The page shows Refreshing, then the result. `/drafts/new` pastes a URL. `/drafts/:id` opens one.
+`/drafts` lists each draft with its first photo, furthest state first, then oldest eBay listing, and updates as drafts change. Refresh Drafts queues an import in the `ebay` queue, taking over one waiting in the paced queue. One import job waits or runs at a time. The page shows Refreshing, then the result. `/drafts/new` pastes a URL. `/drafts/:id` opens one.
 
 `/auto` shows one pending decision at a time as that draft's page, furthest along first, then oldest draft. A draft in `field_removals_drafted` has its removals pending, and one in `photo_edits_drafted` has a photo pick pending. The page keeps a decision while it is pending, then shows the next. With none pending, it says Nothing to decide until one arrives.
 

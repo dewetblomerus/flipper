@@ -26,6 +26,7 @@ erDiagram
         string state "not null"
         string fetch_error
         datetime import_read_at
+        datetime listed_at
         string[] approved_removals
         string removal_error
         datetime inserted_at
@@ -68,6 +69,7 @@ erDiagram
 - `drafts.sku` is the Seller Hub Custom label.
 - `drafts.fetch_error` is the last failed read of the Seller Hub draft. A successful read clears it.
 - `drafts.import_read_at` is when an import last queued the draft's read.
+- `drafts.listed_at` is when eBay created the draft, from the drafts list. It is null until an import lists the draft.
 - `drafts.approved_removals` holds the eBay field names a person approved for removal. `removal_error` is the last failed read or removal after photo approval. Retry clears it.
 <!-- coderabbit-ai-generated:v1 -->
 

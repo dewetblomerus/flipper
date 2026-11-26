@@ -46,10 +46,21 @@ defmodule Flipper.Drafts do
     |> Oban.insert()
   end
 
+  @doc """
+  Lists drafts: furthest along first, then the oldest eBay listing.
+  """
   def list_drafts do
     photos = from p in Photo, order_by: p.position
 
-    Repo.all(from d in Draft, order_by: [desc: d.id], preload: [photos: ^photos])
+    Repo.all(
+      from d in Draft,
+        order_by: [
+          desc: fragment("array_position(?::text[], ?::text)", ^Draft.states(), d.state),
+          asc_nulls_last: d.listed_at,
+          asc: d.id
+        ],
+        preload: [photos: ^photos]
+    )
   end
 
   def get_draft!(id) do
@@ -345,19 +356,21 @@ defmodule Flipper.Drafts do
   defp import_listed(listed, nil), do: add_listed(listed)
 
   defp import_listed(listed, %Draft{state: "awaiting_sku"} = draft) do
-    {:ok, draft} = update_draft(draft, listed_fields(listed))
+    {:ok, draft} = update_draft(draft, listed_fields(listed) ++ listed_age(listed))
 
     if ready?(listed) and due?(draft), do: {:ok, _draft} = queue_import_read(draft)
   end
 
-  defp import_listed(_listed, _draft), do: :ok
+  defp import_listed(listed, draft) do
+    {:ok, _draft} = update_draft(draft, listed_age(listed))
+  end
 
   # The draft and its read are saved together, so no imported draft is left unread.
   defp add_listed(listed) do
     changeset =
       %Draft{}
       |> Draft.create_changeset(listed.ebay_draft_id)
-      |> Ecto.Changeset.change(listed_fields(listed))
+      |> Ecto.Changeset.change(listed_fields(listed) ++ listed_age(listed))
 
     {:ok, _result} =
       Repo.transaction(fn ->
@@ -386,6 +399,10 @@ defmodule Flipper.Drafts do
   defp listed_fields(%{title: title, sku: sku}) do
     [title: blank_to_nil(title), sku: blank_to_nil(sku)]
   end
+
+  # A date the list didn't give leaves the one already saved.
+  defp listed_age(%{listed_at: nil}), do: []
+  defp listed_age(%{listed_at: listed_at}), do: [listed_at: listed_at]
 
   defp ready?(%{sku: sku, photo?: photo?}), do: photo? and blank_to_nil(sku) != nil
 

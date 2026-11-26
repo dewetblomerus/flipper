@@ -86,6 +86,12 @@ defmodule FlipperWeb.DraftRefreshTest do
   end
 
   defp listed(ebay_draft_id) do
-    %{ebay_draft_id: ebay_draft_id, title: "Listed lamp", sku: "", photo?: false}
+    %{
+      ebay_draft_id: ebay_draft_id,
+      title: "Listed lamp",
+      sku: "",
+      photo?: false,
+      listed_at: nil
+    }
   end
 end
