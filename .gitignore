@@ -42,4 +42,5 @@ server/uploads/
 server/priv/__pycache__/
 
 # Saved eBay session cookie.
+/ebay_cookie*
 server/ebay_cookie

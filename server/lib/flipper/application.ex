@@ -5,15 +5,20 @@ defmodule Flipper.Application do
 
   use Application
 
+  alias Flipper.Ebay.SellerHub
+
   @impl true
   def start(_type, _args) do
     children = [
       FlipperWeb.Telemetry,
       Flipper.Repo,
+      {Phoenix.PubSub, name: Flipper.PubSub},
       Flipper.Ebay.Session,
+      # Rejects a stale cookie at boot. It runs here, since an Oban job can run on
+      # any server that shares the database.
+      {Task, &SellerHub.check_session/0},
       {Oban, Application.fetch_env!(:flipper, Oban)},
       {DNSCluster, query: Application.get_env(:flipper, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: Flipper.PubSub},
       # Start a worker by calling: Flipper.Worker.start_link(arg)
       # {Flipper.Worker, arg},
       # Start to serve requests, typically the last entry

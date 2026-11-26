@@ -1,8 +1,10 @@
 defmodule Flipper.Ebay.SellerHub do
   @moduledoc """
-  Reads a Seller Hub draft, downloads its photos, replaces its first photo, and removes
-  optional fields.
+  Checks the eBay session, reads a Seller Hub draft, downloads its photos, replaces its
+  first photo, and removes optional fields.
   """
+
+  def check_session, do: impl().check_session()
 
   def fetch(ebay_draft_id), do: impl().fetch(ebay_draft_id)
 

@@ -25,6 +25,13 @@ config :flipper, FlipperWeb.Endpoint,
 
 config :flipper, :ebay_cookie, System.get_env("EBAY_COOKIE")
 
+# One cookie file for every worktree.
+if config_env() != :test do
+  config :flipper,
+         :ebay_cookie_path,
+         Path.join(System.user_home() || "/", "code/flipper/ebay_cookie")
+end
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :flipper, FlipperWeb.Endpoint,
