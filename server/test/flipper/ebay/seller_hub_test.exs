@@ -35,8 +35,8 @@ defmodule Flipper.Ebay.SellerHubTest do
     assert {:ok, %{title: "Lamp with shade", photo_urls: urls}} = Client.parse(body)
 
     assert urls == [
-             "https://i.ebayimg.com/00/s/MTYwMFgxMjAw/z/aaa/$_1.JPG",
-             "https://i.ebayimg.com/00/s/MTYwMFgxMjAw/z/bbb/$_1.JPG"
+             "https://i.ebayimg.com/00/s/MTYwMFgxMjAw/z/aaa/$_57.JPG",
+             "https://i.ebayimg.com/00/s/MTYwMFgxMjAw/z/bbb/$_57.JPG"
            ]
   end
 

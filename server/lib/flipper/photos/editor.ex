@@ -1,6 +1,6 @@
 defmodule Flipper.Photos.Editor do
   @moduledoc """
-  Straightens a photo, crops it to its subject, and reports the angle and box.
+  Crops a photo to its subject and reports that box in original pixels.
   """
 
   @callback crop(input :: String.t(), output :: String.t(), title :: String.t() | nil) ::
