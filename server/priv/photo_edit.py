@@ -13,7 +13,7 @@ from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 MODEL_ID = "IDEA-Research/grounding-dino-base"
 MARGIN = 0.05
 SCENE_AREA = 0.8
-BRIGHTNESS = 1.3
+BRIGHTNESS = 1.2
 
 _processor = None
 _model = None
