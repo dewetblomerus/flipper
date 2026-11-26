@@ -23,6 +23,10 @@ defmodule Flipper.Drafts do
   # The job states a person's request can move out of the paced queue.
   @waiting [available: [:queue], scheduled: [:queue], retryable: [:queue]]
 
+  # The job states with nothing left to run.
+  @ended ["completed", "cancelled", "discarded"]
+  @lost_write "The eBay job ended before it finished."
+
   @doc """
   Subscribes to every draft's messages.
   """
@@ -301,6 +305,14 @@ defmodule Flipper.Drafts do
   def retry_ebay_photo(%Draft{}), do: {:error, :nothing_to_retry}
 
   @doc """
+  Records an error on each approved eBay write with no job left to run it.
+  """
+  def record_lost_ebay_writes do
+    Enum.each(lost_replacements(), &record_ebay_error(&1, @lost_write))
+    Enum.each(lost_removals(), &record_removal_error(&1, @lost_write))
+  end
+
+  @doc """
   Queues each failed eBay job again. Reads are paced, since there can be many.
   """
   def retry_failed do
@@ -358,8 +370,8 @@ defmodule Flipper.Drafts do
   defp import_listed(listed, %Draft{state: "awaiting_sku"} = draft) do
     {:ok, draft} = update_draft(draft, listed_fields(listed) ++ listed_age(listed))
 
-    if ready?(listed) and due?(draft) do
-      {:ok, _draft} = Repo.transact(fn -> queue_import_read(draft) end)
+    if ready?(listed) do
+      {:ok, _draft} = Repo.transact(fn -> queue_due_read(lock_draft(draft.id)) end)
     end
   end
 
@@ -392,6 +404,14 @@ defmodule Flipper.Drafts do
       transition(draft, :awaiting_sku)
     end
   end
+
+  # Checked on the locked row, since another import can queue the read after this one
+  # loads its drafts.
+  defp queue_due_read(%Draft{state: "awaiting_sku"} = draft) do
+    if due?(draft), do: queue_import_read(draft), else: {:ok, draft}
+  end
+
+  defp queue_due_read(draft), do: {:ok, draft}
 
   defp queue_import_read(draft) do
     with {:ok, draft} <- update_draft(draft, import_read_at: DateTime.utc_now()) do
@@ -808,6 +828,39 @@ defmodule Flipper.Drafts do
 
   defp failed_removals do
     Repo.all(from d in Draft, where: not is_nil(d.removal_error), order_by: d.id)
+  end
+
+  defp lost_replacements do
+    jobs =
+      from j in live_jobs(ReplaceEbayPhoto),
+        where: fragment("(?->>'photo_id')::bigint", j.args) == parent_as(:photo).id
+
+    Repo.all(
+      from p in Photo,
+        as: :photo,
+        join: d in assoc(p, :draft),
+        where: d.state == "photo_edits_approved" and p.use_edited,
+        where: is_nil(p.replaced_on_ebay_at) and is_nil(p.ebay_error),
+        where: not exists(jobs)
+    )
+  end
+
+  defp lost_removals do
+    jobs =
+      from j in live_jobs(RemoveEbayFields),
+        where: fragment("(?->>'draft_id')::bigint", j.args) == parent_as(:draft).id
+
+    Repo.all(
+      from d in Draft,
+        as: :draft,
+        where: d.state == "field_removals_approved" and is_nil(d.removal_error),
+        where: not exists(jobs)
+    )
+  end
+
+  defp live_jobs(worker) do
+    from j in Oban.Job,
+      where: j.worker == ^Oban.Worker.to_string(worker) and j.state not in @ended
   end
 
   defp retry_fetch(draft) do

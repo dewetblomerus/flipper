@@ -10,15 +10,12 @@ defmodule Flipper.Workers.ImportDrafts do
     unique: [period: :infinity, states: :incomplete, fields: [:worker]]
 
   alias Flipper.Drafts
-  alias Flipper.Ebay.{Automated, Session}
+  alias Flipper.Ebay.Session
 
   require Logger
 
   @impl true
-  def perform(%Oban.Job{queue: "ebay_automated"}), do: run_automated()
   def perform(_job), do: run()
-
-  def run_automated, do: Automated.run(&run/0)
 
   def run do
     result =

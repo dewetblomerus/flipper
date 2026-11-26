@@ -30,6 +30,8 @@ The draft moves to `field_removals_drafted`. `/drafts/:id` lists each filled opt
 
 The person unticks any field to keep and approves. The draft moves to `field_removals_approved`. A job removes the ticked fields in one save, reads the draft back, and moves it to `finished` once they are empty. A draft with no field to list moves straight to `finished`. `/drafts/:id` shows the last error with Retry.
 
+Each minute, an approved photo replacement or field removal with no job left to run it gets an error, so Retry shows.
+
 See [eBay draft API](ebay/README.md).
 
 `ebay_draft_id` identifies the Seller Hub draft. eBay assigns the published listing id when the listing is created: [ItemID](https://developer.ebay.com/Devzone/XML/docs/Reference/eBay/types/ItemType.html#ItemID) on the Trading API, and [listingId](https://developer.ebay.com/api-docs/sell/inventory/resources/offer/methods/publishOffer) when an Inventory API offer is published. A sell-similar URL carries this draft's id, not the source listing's item id.

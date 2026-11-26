@@ -34,8 +34,6 @@ config :flipper, Flipper.Mailer, adapter: Swoosh.Adapters.Test
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 
-config :flipper, Flipper.Ebay.Automated, pace: false
-
 config :flipper, Oban, testing: :manual, queues: false, plugins: false
 
 config :flipper,

@@ -125,6 +125,16 @@ defmodule Flipper.ImportDraftsTest do
     assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: waiting.id})
   end
 
+  test "skips a read that another import queues after this one loads its drafts" do
+    waiting_draft("11")
+    list([listed("11", "A-2")])
+
+    after_drafts_load(fn -> Repo.update_all(Draft, set: [import_read_at: DateTime.utc_now()]) end)
+
+    assert :ok = perform_job(ImportDrafts, %{})
+    assert [] = all_enqueued(worker: FetchDraft)
+  end
+
   test "queues a draft's read at most once a day, even when its page shows no SKU" do
     list([listed("11", "A-2")])
     assert :ok = perform_job(ImportDrafts, %{})
@@ -163,7 +173,7 @@ defmodule Flipper.ImportDraftsTest do
     :ok = Session.reject("secret-value")
 
     assert {:cancel, _} = perform_job(ImportDrafts, %{})
-    assert {:cancel, _} = ImportDrafts.run_automated()
+    assert {:cancel, _} = ImportDrafts.run()
     refute_received :ebay_drafts_listed
 
     assert {:cancel, _} =
@@ -211,4 +221,19 @@ defmodule Flipper.ImportDraftsTest do
   defp list(drafts), do: Process.put(:ebay_drafts, {:ok, drafts})
 
   defp finish_jobs, do: Repo.update_all(Oban.Job, set: [state: "completed"])
+
+  # Runs the function once, right after this process next reads the drafts table.
+  defp after_drafts_load(function) do
+    test = self()
+    id = make_ref()
+
+    handler = fn _event, _measurements, %{source: source, query: query}, nil ->
+      if self() == test and source == "drafts" and String.starts_with?(query, "SELECT") do
+        :telemetry.detach(id)
+        function.()
+      end
+    end
+
+    :ok = :telemetry.attach(id, [:flipper, :repo, :query], handler, nil)
+  end
 end

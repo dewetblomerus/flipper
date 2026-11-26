@@ -9,6 +9,7 @@ defmodule Flipper.FieldRemovalsTest do
   alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
+  alias Flipper.Workers.RecordLostEbayWrites
   alias Flipper.Workers.RemoveEbayFields
 
   test "the removal draft keeps a snapshot and offers the optional fields" do
@@ -146,19 +147,15 @@ defmodule Flipper.FieldRemovalsTest do
     assert_enqueued(worker: RemoveEbayFields, args: %{draft_id: draft.id})
   end
 
-  test "only a discarded crash makes an interrupted removal retryable" do
+  test "a removal whose job ends without an error becomes retryable" do
     draft = reviewed_draft("22")
     {:ok, _draft} = Drafts.approve_field_removals(draft, ["subtitle"])
-    [job] = all_enqueued(worker: RemoveEbayFields)
 
-    :telemetry.execute([:oban, :job, :exception], %{}, %{job: job, state: :failure, kind: :exit})
+    assert :ok = perform_job(RecordLostEbayWrites, %{})
     assert Repo.get!(Draft, draft.id).removal_error == nil
 
-    job
-    |> Ecto.Changeset.change(state: "discarded", attempt: job.max_attempts)
-    |> Repo.update!()
-
-    :telemetry.execute([:oban, :job, :exception], %{}, %{job: job, state: :discard, kind: :exit})
+    discard_available_jobs()
+    assert :ok = perform_job(RecordLostEbayWrites, %{})
 
     draft = Repo.get!(Draft, draft.id)
     assert is_binary(draft.removal_error)

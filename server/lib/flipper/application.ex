@@ -5,22 +5,19 @@ defmodule Flipper.Application do
 
   use Application
 
-  alias Flipper.Workers.{EbayWriteFailures, ImportDrafts}
+  alias Flipper.Workers.ImportDrafts
 
   @impl true
   def start(_type, _args) do
-    :ok = EbayWriteFailures.attach()
-
     children = [
       FlipperWeb.Telemetry,
       Flipper.Repo,
       {Phoenix.PubSub, name: Flipper.PubSub},
       Flipper.Ebay.Session,
-      Flipper.Ebay.Automated,
       {Oban, Application.fetch_env!(:flipper, Oban)},
       # Imports the drafts list at boot, which also rejects a stale cookie. It runs
       # here, since an Oban job can run on any server that shares the database.
-      {Task, &ImportDrafts.run_automated/0},
+      {Task, &ImportDrafts.run/0},
       {DNSCluster, query: Application.get_env(:flipper, :dns_cluster_query) || :ignore},
       # Start a worker by calling: Flipper.Worker.start_link(arg)
       # {Flipper.Worker, arg},
