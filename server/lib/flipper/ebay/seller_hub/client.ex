@@ -264,10 +264,10 @@ defmodule Flipper.Ebay.SellerHub.Client do
   # A success status does not prove a field changed.
   defp confirm_removed(body, names) do
     with {:ok, modules} <- modules(body),
-         {:ok, filled} <- OptionalFields.filled(modules) do
-      case Enum.filter(filled, &(&1.name in names)) do
+         {:ok, kept} <- OptionalFields.still_filled(modules, names) do
+      case kept do
         [] -> :ok
-        kept -> {:error, "eBay draft kept #{Enum.map_join(kept, ", ", & &1.label)}"}
+        _ -> {:error, "eBay draft kept #{Enum.map_join(kept, ", ", & &1.label)}"}
       end
     end
   end

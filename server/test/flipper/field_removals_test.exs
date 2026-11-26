@@ -41,6 +41,16 @@ defmodule Flipper.FieldRemovalsTest do
     assert [%Snapshot{modules: ^original}] = Repo.all(Snapshot)
   end
 
+  test "a read without item specifics is not kept as the snapshot" do
+    draft = approved_draft("503")
+
+    assert {:error, "eBay draft had no item specifics or title"} =
+             perform_job(DraftFieldRemovals, %{draft_id: draft.id})
+
+    assert [] = Repo.all(Snapshot)
+    assert Repo.get!(Draft, draft.id).state == "photo_edits_approved"
+  end
+
   test "a draft with nothing to remove finishes" do
     draft = approved_draft("33")
 
@@ -112,6 +122,18 @@ defmodule Flipper.FieldRemovalsTest do
     assert :ok = Drafts.retry_failed()
     assert Repo.get!(Draft, draft.id).removal_error == nil
     assert_enqueued(worker: RemoveEbayFields, args: %{draft_id: draft.id})
+  end
+
+  test "a retry keeps the error while the failed job is still finishing" do
+    draft = approved_draft("502")
+    assert {:error, _} = perform_job(DraftFieldRemovals, %{draft_id: draft.id}, attempt: 3)
+    # perform_job/3 leaves the stored job incomplete, as it is while the worker still runs.
+    assert [job] = all_enqueued(worker: DraftFieldRemovals)
+    draft = Repo.get!(Draft, draft.id)
+
+    assert {:error, :job_already_queued} = Drafts.retry_removals(draft)
+    assert Repo.get!(Draft, draft.id).removal_error == "eBay returned 502"
+    assert [^job] = all_enqueued(worker: DraftFieldRemovals)
   end
 
   test "a draft without an error has nothing to retry" do

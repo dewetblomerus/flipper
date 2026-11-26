@@ -39,6 +39,23 @@ defmodule Flipper.Ebay.OptionalFieldsTest do
     assert OptionalFields.filled(modules) == {:ok, []}
   end
 
+  test "still_filled finds a named value even when the field is no longer optional" do
+    modules =
+      modules(
+        [
+          specific("Type", ["REQUIRED"], ["Remote"]),
+          specific("Model", ["ADDITIONAL"], ["X1"]) |> Map.put("readOnly", true),
+          specific("Color", ["RECOMMENDED"], [])
+        ],
+        subtitle: "Works well"
+      )
+
+    names = ["attributes.Type", "attributes.Model", "attributes.Color"]
+
+    assert {:ok, kept} = OptionalFields.still_filled(modules, names)
+    assert Enum.map(kept, & &1.label) == ["Type", "Model"]
+  end
+
   test "modules without item specifics are an error" do
     assert {:error, _} = OptionalFields.filled(%{"ATTRIBUTES" => %{}, "TITLE" => %{}})
   end

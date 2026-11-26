@@ -53,6 +53,15 @@ defmodule Flipper.Ebay.SellerHubRemovalTest do
              Client.remove_fields("123", ["attributes.Color"], cookie: "session", plug: server)
   end
 
+  test "remove_fields fails when a kept field is no longer optional" do
+    for changed <- [[groups: ["REQUIRED"]], [read_only: true]] do
+      server = draft_server([page(color: "Black"), page([color: "Black"] ++ changed)])
+
+      assert {:error, "eBay draft kept Color"} =
+               Client.remove_fields("123", ["attributes.Color"], cookie: "session", plug: server)
+    end
+  end
+
   test "remove_fields with nothing to remove makes no request" do
     assert :ok = Client.remove_fields("123", [], cookie: nil)
   end
@@ -60,7 +69,7 @@ defmodule Flipper.Ebay.SellerHubRemovalTest do
   # Serves the pages in order, repeating the last, and reports each save.
   defp draft_server(pages) do
     parent = self()
-    agent = start_supervised!({Agent, fn -> pages end})
+    agent = start_supervised!({Agent, fn -> pages end}, id: make_ref())
     name = {:ebay, self(), System.unique_integer([:positive])}
 
     Req.Test.stub(name, fn
@@ -80,10 +89,15 @@ defmodule Flipper.Ebay.SellerHubRemovalTest do
   defp next_page([page]), do: {page, [page]}
   defp next_page([page | rest]), do: {page, rest}
 
-  defp page(color: color) do
+  defp page(opts) do
     specifics =
       Jason.encode!([
-        %{name: "attributes.Color", groups: ["RECOMMENDED"], value: List.wrap(color)}
+        %{
+          name: "attributes.Color",
+          groups: Keyword.get(opts, :groups, ["RECOMMENDED"]),
+          readOnly: Keyword.get(opts, :read_only, false),
+          value: List.wrap(opts[:color])
+        }
       ])
 
     """

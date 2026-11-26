@@ -15,15 +15,16 @@ defmodule Flipper.Ebay.SellerHub.OptionalFields do
   Takes the draft's modules and returns each filled optional field as
   `%{name: name, label: label, value: value}`.
   """
-  def filled(%{
-        "ATTRIBUTES" => %{"attributeList" => specifics} = attributes,
-        "TITLE" => title
-      })
-      when is_list(specifics) do
-    {:ok, specifics(specifics) ++ subtitle(title) ++ upc(attributes)}
-  end
+  def filled(modules), do: fields(modules, &optional?/1)
 
-  def filled(_modules), do: {:error, "eBay draft had no item specifics or title"}
+  @doc """
+  Returns the named fields that still hold a value, including any no longer optional.
+  """
+  def still_filled(modules, names) do
+    with {:ok, fields} <- fields(modules, fn _specific -> true end) do
+      {:ok, Enum.filter(fields, &(&1.name in names))}
+    end
+  end
 
   @doc """
   Returns the save fields that remove the named fields.
@@ -38,15 +39,28 @@ defmodule Flipper.Ebay.SellerHub.OptionalFields do
     |> put_if(@upc in names, :removedFields, [@upc])
   end
 
-  defp specifics(specifics) do
+  defp fields(
+         %{
+           "ATTRIBUTES" => %{"attributeList" => specifics} = attributes,
+           "TITLE" => title
+         },
+         include?
+       )
+       when is_list(specifics) do
+    {:ok, specifics(specifics, include?) ++ subtitle(title) ++ upc(attributes)}
+  end
+
+  defp fields(_modules, _include?), do: {:error, "eBay draft had no item specifics or title"}
+
+  defp specifics(specifics, include?) do
     for %{"name" => @attribute <> label = name} = specific <- specifics,
-        optional?(name, specific),
+        include?.(specific),
         value = text(specific["value"]),
         do: %{name: name, label: label, value: value}
   end
 
-  defp optional?(name, specific) do
-    name not in @kept and
+  defp optional?(specific) do
+    specific["name"] not in @kept and
       "REQUIRED" not in List.wrap(specific["groups"]) and
       specific["readOnly"] != true
   end

@@ -216,6 +216,9 @@ defmodule FlipperWeb.DraftLive.Show do
       {:ok, _draft} ->
         {:noreply, reload(socket)}
 
+      {:error, :job_already_queued} ->
+        {:noreply, put_flash(socket, :error, "The last attempt is still finishing. Try again.")}
+
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Nothing to retry.")}
     end

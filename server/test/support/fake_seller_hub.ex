@@ -60,6 +60,9 @@ defmodule Flipper.Ebay.FakeSellerHub do
     :ok
   end
 
+  # Draft "503" is read without its item specifics.
+  defp modules("503"), do: %{"ATTRIBUTES" => %{}, "TITLE" => %{}}
+
   # Draft "33" has no optional field filled.
   defp modules("33") do
     %{"ATTRIBUTES" => %{"attributeList" => []}, "TITLE" => %{}}

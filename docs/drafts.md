@@ -10,7 +10,7 @@ An Oban job then reads that Seller Hub draft with the saved cookie. It stores th
 
 The person picks one side of the first photo. That pick is `photos.use_edited` and approves it: the draft moves to `photo_edits_approved`, and the pick and the edit are locked. Picking the edit enqueues one Oban job. With the saved cookie, it uploads the edit to eBay and saves the Seller Hub draft with that photo first. `/drafts/:id` shows Replacing on eBay, Replaced on eBay, or the last error with Retry.
 
-Sell similar fills fields that can be wrong. After the edit replaces the photo, or as soon as the original is picked, a job reads the Seller Hub draft and keeps every module as the draft's snapshot, with photos as URLs. The snapshot holds the approved photo and every field before removal. It is never overwritten.
+Sell similar fills fields that can be wrong. After the edit replaces the photo, or as soon as the original is picked, a job reads the Seller Hub draft and keeps every module as the draft's snapshot, with photos as URLs. The snapshot holds the approved photo and every field before removal. It is never overwritten, and a read without item specifics is not kept.
 
 The draft moves to `field_removals_drafted`. `/drafts/:id` lists each filled optional field, ticked: item specifics eBay groups as Recommended or Additional, the subtitle, and the UPC. Required specifics, Brand, read-only specifics, and every other field are never listed.
 

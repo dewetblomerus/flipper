@@ -234,9 +234,10 @@ defmodule Flipper.Drafts do
         with %Draft{removal_error: error} = draft when is_binary(error) <- lock_draft(id),
              {:ok, job} <- removal_job(draft),
              {:ok, draft} <- update_draft(draft, removal_error: nil),
-             :ok <- insert_job(job) do
+             :ok <- insert_new_job(job) do
           draft
         else
+          {:error, reason} -> Repo.rollback(reason)
           _ -> Repo.rollback(:nothing_to_retry)
         end
       end)
@@ -437,10 +438,12 @@ defmodule Flipper.Drafts do
     end)
   end
 
+  # A snapshot is never overwritten, so only modules that list their fields are kept.
   defp keep_snapshot(%Draft{id: id}, modules) do
     snapshot = %Snapshot{draft_id: id, modules: modules}
 
-    with {:ok, _snapshot} <-
+    with {:ok, _filled} <- OptionalFields.filled(modules),
+         {:ok, _snapshot} <-
            Repo.insert(snapshot, on_conflict: :nothing, conflict_target: :draft_id) do
       {:ok, Repo.get_by!(Snapshot, draft_id: id)}
     end
@@ -468,7 +471,7 @@ defmodule Flipper.Drafts do
     {:ok, RemoveEbayFields.new(%{draft_id: id})}
   end
 
-  defp removal_job(%Draft{}), do: :error
+  defp removal_job(%Draft{}), do: :nothing_to_retry
 
   defp update_draft(draft, changes) do
     draft
@@ -498,6 +501,15 @@ defmodule Flipper.Drafts do
     case Oban.insert(changeset) do
       {:ok, _job} -> :ok
       {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  # The failing job records its error before it finishes, and blocks a new one until then.
+  defp insert_new_job(changeset) do
+    case Oban.insert(changeset) do
+      {:ok, %Oban.Job{conflict?: false}} -> :ok
+      {:ok, %Oban.Job{conflict?: true}} -> {:error, :job_already_queued}
+      {:error, reason} -> {:error, reason}
     end
   end
 
