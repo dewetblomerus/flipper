@@ -548,7 +548,7 @@ defmodule Flipper.Ebay.SellerHub.Client do
     |> String.split("?")
     |> hd()
     |> String.replace(~r/s-l\d+(?=\.)/, "s-l1600")
-    |> String.replace(~r/\$_\d+(?=\.)/, "$_1")
+    |> String.replace(~r/\$_\d+(?=\.)/, "$_57")
   end
 
   defp walk(data, fun) do
