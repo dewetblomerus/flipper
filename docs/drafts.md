@@ -16,6 +16,8 @@ Pasting an id that already exists opens that draft.
 
 `/drafts` lists each draft with its first photo. `/drafts/new` pastes a URL. `/drafts/:id` opens one.
 
+`/auto` shows one pending decision at a time as that draft's page, furthest along first, then oldest draft. A draft in `photo_edits_drafted` has a photo pick pending. The page keeps a decision while it is pending, then shows the next. With none pending, it says Nothing to decide until one arrives.
+
 # To-do
 
 ## Published listing

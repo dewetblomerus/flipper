@@ -119,6 +119,8 @@ defmodule FlipperWeb.DraftLive.Show do
   end
 
   @impl true
+  def mount(:not_mounted_at_router, session, socket), do: mount(session, session, socket)
+
   def mount(%{"id" => id}, _session, socket) do
     draft = Drafts.get_draft!(id)
 

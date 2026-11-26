@@ -14,6 +14,11 @@ defmodule Flipper.Drafts do
   alias Flipper.Workers.FetchDraft
   alias Flipper.Workers.ReplaceEbayPhoto
 
+  @doc """
+  Subscribes to every draft's messages.
+  """
+  def subscribe, do: Phoenix.PubSub.subscribe(Flipper.PubSub, "drafts")
+
   def list_drafts do
     photos = from p in Photo, order_by: p.position
 
@@ -468,6 +473,7 @@ defmodule Flipper.Drafts do
 
   defp broadcast(id, message) do
     Phoenix.PubSub.broadcast(Flipper.PubSub, "draft:#{id}", message)
+    Phoenix.PubSub.broadcast(Flipper.PubSub, "drafts", message)
   end
 
   defp insert_draft(ebay_draft_id) do
