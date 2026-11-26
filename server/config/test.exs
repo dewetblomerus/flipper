@@ -1,5 +1,13 @@
 import Config
 
+# Each checkout tests against its own database, so one branch's migrations can't break
+# another's tests. A checkout named flipper-my-branch uses flipper_test_my_branch.
+checkout =
+  Path.expand("../..", __DIR__)
+  |> Path.basename()
+  |> String.replace_prefix("flipper", "")
+  |> String.replace(~r/[^a-z0-9]+/i, "_")
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
@@ -9,7 +17,7 @@ config :flipper, Flipper.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
-  database: "flipper_test#{System.get_env("MIX_TEST_PARTITION")}",
+  database: "flipper_test#{checkout}#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 

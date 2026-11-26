@@ -5,6 +5,7 @@ defmodule FlipperWeb.AutoLiveTest do
   import Phoenix.LiveViewTest
 
   alias Flipper.Drafts
+  alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
 
@@ -78,6 +79,28 @@ defmodule FlipperWeb.AutoLiveTest do
     refute shown?(view, first)
   end
 
+  test "shows removals before an older photo pick, and approving them shows the next", %{
+    conn: conn
+  } do
+    waiting = fetched_draft(601)
+    reviewed = fetched_draft(602)
+    edit(waiting)
+    draft_removals(reviewed)
+
+    {:ok, view, _html} = live(conn, ~p"/auto")
+
+    assert shown?(view, reviewed, :field_removals)
+    refute shown?(view, waiting)
+
+    view
+    |> child(reviewed, :field_removals)
+    |> element("#field-removals-form")
+    |> render_submit()
+
+    assert shown?(view, waiting)
+    refute shown?(view, reviewed, :field_removals)
+  end
+
   defp fetched_draft(ebay_draft_id) do
     {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=#{ebay_draft_id}")
     :ok = perform_job(FetchDraft, %{draft_id: draft.id})
@@ -88,11 +111,21 @@ defmodule FlipperWeb.AutoLiveTest do
     :ok = perform_job(EditPhoto, %{photo_id: photo.id})
   end
 
-  defp child_id(draft), do: "auto-photo_pick-#{draft.id}"
+  defp draft_removals(%{photos: [photo]} = draft) do
+    edit(draft)
+    {:ok, _photo} = Drafts.choose_edit(Drafts.get_photo!(photo.id), false)
+    :ok = perform_job(DraftFieldRemovals, %{draft_id: draft.id})
+  end
 
-  defp child(view, draft), do: find_live_child(view, child_id(draft))
+  defp child_id(draft, kind), do: "auto-#{kind}-#{draft.id}"
 
-  defp shown?(view, draft), do: has_element?(view, "##{child_id(draft)}")
+  defp child(view, draft, kind \\ :photo_pick) do
+    find_live_child(view, child_id(draft, kind))
+  end
+
+  defp shown?(view, draft, kind \\ :photo_pick) do
+    has_element?(view, "##{child_id(draft, kind)}")
+  end
 
   defp pick_original(view, %{photos: [photo]} = draft) do
     view |> child(draft) |> element("#photo-#{photo.id}-original") |> render_click()

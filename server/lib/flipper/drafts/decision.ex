@@ -11,7 +11,7 @@ defmodule Flipper.Drafts.Decision do
   defstruct [:draft_id, :kind]
 
   # Furthest along first.
-  @kinds [photo_pick: "photo_edits_drafted"]
+  @kinds [field_removals: "field_removals_drafted", photo_pick: "photo_edits_drafted"]
 
   @doc """
   Lists pending decisions: furthest along first, then oldest draft.

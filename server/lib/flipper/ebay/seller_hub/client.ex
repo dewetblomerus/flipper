@@ -3,10 +3,14 @@ defmodule Flipper.Ebay.SellerHub.Client do
   Reads and writes a Seller Hub draft through its listing page, with the browser cookie.
   """
 
+  alias Flipper.Ebay.SellerHub.OptionalFields
   alias Flipper.Ebay.Session
 
   @image_types ~w(image/jpeg image/png image/gif image/webp image/avif image/heic)
   @drafts_url "https://www.ebay.com/sh/lst/drafts"
+  # Where each of the page's data modules starts. TextualDisplay objects are labels.
+  @module_key ~r/"([A-Z][A-Z0-9_]+)":(?=\{"_type":"(?!TextualDisplay")[A-Za-z0-9]+")/
+  @secret_keys ~w(epsData srt csrfToken)
   @user_agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36"
   @browser_headers [
     {"accept",
@@ -104,6 +108,33 @@ defmodule Flipper.Ebay.SellerHub.Client do
     end
   end
 
+  @doc """
+  Reads every data module of the draft, without upload tokens.
+  """
+  def read_draft(ebay_draft_id, opts \\ []) do
+    with {:ok, cookie} <- signed_in_cookie(opts),
+         {:ok, body} <- listing_page(ebay_draft_id, cookie, opts) do
+      modules(body)
+    end
+  end
+
+  @doc """
+  Removes the named optional fields in one save, then reads the draft back to confirm.
+  """
+  def remove_fields(ebay_draft_id, names, opts \\ [])
+
+  def remove_fields(_ebay_draft_id, [], _opts), do: :ok
+
+  def remove_fields(ebay_draft_id, names, opts) do
+    with {:ok, cookie} <- signed_in_cookie(opts),
+         {:ok, body} <- listing_page(ebay_draft_id, cookie, opts),
+         {:ok, srt} <- draft_token(body),
+         :ok <- save_removal(ebay_draft_id, names, srt, cookie, opts),
+         {:ok, saved} <- listing_page(ebay_draft_id, cookie, opts) do
+      confirm_removed(saved, names)
+    end
+  end
+
   def eps_data(body) do
     with {:ok, eps} <- object_after(body, ~s("epsData":)),
          %{"endpoint" => "https://" <> _} <- eps do
@@ -113,8 +144,21 @@ defmodule Flipper.Ebay.SellerHub.Client do
     end
   end
 
+  @doc """
+  The token for the `skip_validation` route, which saves photos.
+  """
   def save_token(body) do
-    key = ~S|"/lstng/api/listing_draft/:draftId(\\d+)/skip_validation":"|
+    token(body, ~S|"/lstng/api/listing_draft/:draftId(\\d+)/skip_validation":"|)
+  end
+
+  @doc """
+  The token for the main draft route, which saves every other field.
+  """
+  def draft_token(body) do
+    token(body, ~S|"/lstng/api/listing_draft/:draftId(\\d+)":"|)
+  end
+
+  defp token(body, key) do
     text = String.replace(body, "&quot;", ~s("))
 
     with [_, rest] <- String.split(text, key, parts: 2),
@@ -192,16 +236,73 @@ defmodule Flipper.Ebay.SellerHub.Client do
     url =
       "https://www.ebay.com/lstng/api/listing_draft/#{ebay_draft_id}/skip_validation?mode=SellLikeItem"
 
+    put_draft(url, %{pictures: pictures}, srt, cookie, opts)
+  end
+
+  defp modules(body) do
+    modules =
+      @module_key
+      |> Regex.scan(body, return: :index)
+      |> Enum.reduce(%{}, fn [{start, length}, {name_start, name_length}], modules ->
+        name = binary_part(body, name_start, name_length)
+        put_module(modules, name, body, start + length)
+      end)
+
+    case modules do
+      %{"ATTRIBUTES" => _, "TITLE" => _} -> {:ok, modules}
+      _ -> {:error, "eBay listing page had no draft"}
+    end
+  end
+
+  # skip_validation ignores every field but photos, so removals use the main route.
+  defp save_removal(ebay_draft_id, names, srt, cookie, opts) do
+    url = "https://www.ebay.com/lstng/api/listing_draft/#{ebay_draft_id}?mode=SellLikeItem"
+
+    put_draft(url, OptionalFields.removal(names), srt, cookie, opts)
+  end
+
+  # A success status does not prove a field changed.
+  defp confirm_removed(body, names) do
+    with {:ok, modules} <- modules(body),
+         {:ok, kept} <- OptionalFields.still_filled(modules, names) do
+      case kept do
+        [] -> :ok
+        _ -> {:error, "eBay draft kept #{Enum.map_join(kept, ", ", & &1.label)}"}
+      end
+    end
+  end
+
+  defp put_module(modules, name, _body, _start) when is_map_key(modules, name), do: modules
+
+  defp put_module(modules, name, body, start) do
+    with {:ok, slice, _next} <- slice_object(body, start),
+         {:ok, module} <- Jason.decode(slice) do
+      Map.put(modules, name, redact(module))
+    else
+      _ -> modules
+    end
+  end
+
+  defp redact(%{} = map) do
+    for {key, value} <- map, key not in @secret_keys, into: %{}, do: {key, redact(value)}
+  end
+
+  defp redact(list) when is_list(list), do: Enum.map(list, &redact/1)
+  defp redact(value), do: value
+
+  defp put_draft(url, fields, srt, cookie, opts) do
+    request = %{
+      removedFields: [],
+      requestId: Ecto.UUID.generate(),
+      requestMeta: %{lastDeltaTimestamp: System.os_time(:millisecond)}
+    }
+
     req_opts =
       Keyword.merge(
         [
           headers: [{"cookie", cookie}, {"srt", srt} | api_headers()],
-          json: %{
-            pictures: pictures,
-            removedFields: [],
-            requestId: Ecto.UUID.generate(),
-            requestMeta: %{lastDeltaTimestamp: System.os_time(:millisecond)}
-          },
+          json: Map.merge(request, fields),
+          decode_body: false,
           redirect: false,
           retry: false
         ],

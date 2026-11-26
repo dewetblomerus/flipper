@@ -4,6 +4,7 @@ defmodule Flipper.ReplaceEbayPhotoTest do
 
   alias Flipper.Drafts
   alias Flipper.Drafts.Photo
+  alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
   alias Flipper.Workers.ReplaceEbayPhoto
@@ -18,12 +19,13 @@ defmodule Flipper.ReplaceEbayPhotoTest do
     assert [_] = all_enqueued(worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
   end
 
-  test "approving the original makes no eBay call" do
+  test "approving the original replaces no photo and drafts the field removals" do
     {draft, photo} = edited_draft("22")
 
     assert {:ok, %Photo{use_edited: false}} = Drafts.choose_edit(photo, false)
     assert Drafts.get_draft!(draft.id).state == "photo_edits_approved"
     assert [] = all_enqueued(worker: ReplaceEbayPhoto)
+    assert [_] = all_enqueued(worker: DraftFieldRemovals, args: %{draft_id: draft.id})
   end
 
   test "an approved choice is locked and its edit is not redone" do
@@ -49,6 +51,7 @@ defmodule Flipper.ReplaceEbayPhotoTest do
     assert photo.edited_ebay_url == @new_url
     assert %DateTime{} = photo.replaced_on_ebay_at
     assert Drafts.get_draft!(draft.id).state == "photo_edits_approved"
+    assert [_] = all_enqueued(worker: DraftFieldRemovals, args: %{draft_id: draft.id})
 
     assert :ok = perform_job(ReplaceEbayPhoto, %{photo_id: photo.id})
     refute_received {:ebay_photo_uploaded, _, _, _}
@@ -58,6 +61,7 @@ defmodule Flipper.ReplaceEbayPhotoTest do
   test "the last failed attempt records the error, and a retry reuses the upload" do
     {draft, photo} = edited_draft("500")
     {:ok, _photo} = Drafts.choose_edit(photo, true)
+    assert [] = all_enqueued(worker: DraftFieldRemovals)
 
     assert {:error, "eBay returned 500"} =
              perform_job(ReplaceEbayPhoto, %{photo_id: photo.id}, attempt: 1, max_attempts: 3)
