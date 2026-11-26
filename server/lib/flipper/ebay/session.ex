@@ -22,23 +22,14 @@ defmodule Flipper.Ebay.Session do
   def status, do: status(cookie())
 
   @doc """
-  Returns `%{status: status, error: reason}` while eBay rejects the cookie, or nil.
+  Returns `%{status: status, error: reason}` while eBay rejects the cookie, or nil. A
+  rejection holding only the cookie's digest has a nil status.
   """
   def rejection(cookie \\ cookie())
 
   def rejection(nil), do: nil
 
-  def rejection(cookie) do
-    digest = digest(cookie)
-
-    with value when is_binary(value) <- read(rejected_path()),
-         {:ok, %{"cookie" => ^digest, "status" => status, "error" => error}} <-
-           Jason.decode(value) do
-      %{status: status, error: error}
-    else
-      _ -> nil
-    end
-  end
+  def rejection(cookie), do: parse_rejection(read(rejected_path()), digest(cookie))
 
   def subscribe do
     Phoenix.PubSub.subscribe(Flipper.PubSub, @topic)
@@ -111,6 +102,21 @@ defmodule Flipper.Ebay.Session do
   defp status(nil), do: :missing
 
   defp status(cookie), do: if(rejection(cookie), do: :rejected, else: :ok)
+
+  defp parse_rejection(nil, _digest), do: nil
+
+  # Servers on this machine can run code that saves only the digest.
+  defp parse_rejection(digest, digest), do: %{status: nil, error: "eBay refused the cookie"}
+
+  defp parse_rejection(value, digest) do
+    case Jason.decode(value) do
+      {:ok, %{"cookie" => ^digest, "status" => status, "error" => error}} ->
+        %{status: status, error: error}
+
+      _ ->
+        nil
+    end
+  end
 
   defp digest(cookie), do: :sha256 |> :crypto.hash(cookie) |> Base.encode16()
 

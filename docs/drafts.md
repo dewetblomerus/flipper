@@ -4,7 +4,7 @@ A person pastes an eBay draft URL. Flipper reads `draft_id` or `draftId` from th
 
 While no eBay cookie is saved, or after eBay rejects it, a popover blocks every page and asks for one, with eBay's reason. Any request answered with a sign-in redirect, a browser check, 401, 403, or 429 rejects it. No server then sends eBay anything, photo downloads included, until a cookie is saved. Saving a cookie enqueues a job for each failed read and eBay update. Those reads run in the paced queue. The popover keeps its field focused for pasting.
 
-The cookie is saved to `~/code/flipper/ebay_cookie`, or `/code/flipper/ebay_cookie` without a home directory. A rejection is saved beside it in `ebay_cookie.rejected`: the cookie's digest, eBay's status, and the reason. Every worktree's server uses both files and notices a change within a second.
+The cookie is saved to `~/code/flipper/ebay_cookie`, or `/code/flipper/ebay_cookie` without a home directory. A rejection is saved beside it in `ebay_cookie.rejected`: the cookie's digest, eBay's status, and the reason. A file holding only the digest rejects too. Every worktree's server uses both files and notices a change within a second.
 
 Flipper also reads the Seller Hub drafts list hourly, as each server starts, and on Refresh Drafts: one request for up to 200 drafts. The start read also checks the cookie. A server whose cookie is missing or rejected reads nothing. The list needs its photo and Custom label (SKU) columns.
 

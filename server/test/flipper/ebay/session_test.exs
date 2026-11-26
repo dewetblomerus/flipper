@@ -80,6 +80,15 @@ defmodule Flipper.Ebay.SessionTest do
     assert Bitwise.band(File.stat!(rejected).mode, 0o777) == 0o600
   end
 
+  test "a rejection holding only the digest rejects its cookie", %{rejected: rejected} do
+    assert :ok = Session.set("secret-value")
+    File.write!(rejected, Base.encode16(:crypto.hash(:sha256, "secret-value")))
+
+    assert %{status: nil, error: "eBay refused the cookie"} = Session.rejection()
+    assert Session.status() == :rejected
+    assert is_nil(Session.rejection("new-value"))
+  end
+
   test "status follows the cookie from missing to saved to rejected" do
     assert Session.status() == :missing
 
