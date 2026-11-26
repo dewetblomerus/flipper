@@ -6,13 +6,14 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
-from PIL import Image
+from PIL import Image, ImageEnhance
 import torch
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
 MODEL_ID = "IDEA-Research/grounding-dino-base"
 MARGIN = 0.05
 SCENE_AREA = 0.8
+BRIGHTNESS = 1.5
 
 _processor = None
 _model = None
@@ -22,11 +23,23 @@ def main() -> None:
     source = sys.argv[1]
     dest = sys.argv[2]
     image = Image.open(source).convert("RGB")
-    text = phrase(sys.argv[3])
-    left, top, width, height = crop_box(subject_box(image, text), image.size)
+    left, top, width, height = framing(image, sys.argv[3])
     save_crop(image.crop((left, top, left + width, top + height)), dest)
     json.dump({"left": left, "top": top, "width": width, "height": height}, sys.stdout)
     sys.stdout.write("\n")
+
+
+def framing(image, title):
+    """The subject crop of a camera photo. Any other shape is already cropped."""
+    if not camera_shaped(image.size):
+        return 0, 0, *image.size
+
+    return crop_box(subject_box(image, phrase(title)), image.size)
+
+
+def camera_shaped(size):
+    short, long = sorted(size)
+    return short * 4 == long * 3
 
 
 def phrase(title: str) -> str:
@@ -134,7 +147,7 @@ def save_crop(cropped, dest) -> None:
     elif cropped.mode != "RGB":
         cropped = cropped.convert("RGB")
 
-    cropped.save(dest, "PNG")
+    ImageEnhance.Brightness(cropped).enhance(BRIGHTNESS).save(dest, "PNG")
 
 
 if __name__ == "__main__":
