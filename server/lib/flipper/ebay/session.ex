@@ -96,7 +96,7 @@ defmodule Flipper.Ebay.Session do
   # A digest keeps the cookie out of the process state and its crash reports.
   defp snapshot do
     cookie = cookie()
-    {status(cookie), cookie && digest(cookie)}
+    {cookie && digest(cookie), rejection(cookie)}
   end
 
   defp status(nil), do: :missing

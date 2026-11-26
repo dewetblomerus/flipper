@@ -126,6 +126,15 @@ defmodule Flipper.Ebay.SessionTest do
     assert_received :ebay_session_changed
   end
 
+  test "subscribers hear about a new reason for a rejected cookie" do
+    assert :ok = Session.set("secret-value")
+    assert :ok = reject("secret-value")
+    assert :ok = Session.subscribe()
+
+    assert :ok = Session.reject("secret-value", 403, "eBay returned 403")
+    assert_received :ebay_session_changed
+  end
+
   test "a sign-in redirect rejects the cookie" do
     assert :ok = Session.set("secret-value")
     redirect_ebay_to("https://signin.ebay.com/ws/eBayISAPI.dll?SignIn")
