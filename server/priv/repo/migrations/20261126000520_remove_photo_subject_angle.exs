@@ -12,7 +12,9 @@ defmodule Flipper.Repo.Migrations.RemovePhotoSubjectAngle do
              check: """
              (subject_left IS NULL AND subject_top IS NULL AND subject_width IS NULL AND subject_height IS NULL)
              OR
-             (subject_left IS NOT NULL AND subject_top IS NOT NULL AND subject_width > 0 AND subject_height > 0)
+             (subject_left IS NOT NULL AND subject_top IS NOT NULL
+              AND subject_width IS NOT NULL AND subject_height IS NOT NULL
+              AND subject_width > 0 AND subject_height > 0)
              """
            )
   end
@@ -30,7 +32,9 @@ defmodule Flipper.Repo.Migrations.RemovePhotoSubjectAngle do
              check: """
              (subject_left IS NULL AND subject_top IS NULL AND subject_width IS NULL AND subject_height IS NULL AND subject_angle IS NULL)
              OR
-             (subject_left IS NOT NULL AND subject_top IS NOT NULL AND subject_width > 0 AND subject_height > 0 AND subject_angle IS NOT NULL)
+             (subject_left IS NOT NULL AND subject_top IS NOT NULL
+              AND subject_width IS NOT NULL AND subject_height IS NOT NULL
+              AND subject_width > 0 AND subject_height > 0 AND subject_angle IS NOT NULL)
              """
            )
   end
