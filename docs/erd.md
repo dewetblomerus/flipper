@@ -56,8 +56,8 @@ erDiagram
 - `drafts.fetch_error` is the last failed read of the Seller Hub draft. A successful read clears it.
 - `drafts.ebay_draft_id` is the Seller Hub `draft_id` from a pasted eBay draft URL. It is unique. See [Drafts](drafts.md).
 - `photos.position` is unique per draft. Deleting a draft deletes its photos.
-- `original_path` and `edited_path` are disk paths. The original is never replaced. The edit job crops that original to the subject box and writes `edited_path` and `edited_content_type`. The background stays. A rework overwrites the edit in place.
-- The subject box is `subject_left`, `subject_top`, `subject_width`, and `subject_height`, in pixels of the original. It is the crop: the subject, its margin, and the surroundings that bring it toward a square. Width and height count pixels. All four are null, or all four are present with width and height greater than zero. A check constraint enforces that. The crop reuses this box.
+- `original_path` and `edited_path` are disk paths. The original is never replaced. The edit job crops that original to the subject box, brightens it, and writes `edited_path` and `edited_content_type`. The background stays. A rework overwrites the edit in place.
+- The subject box is `subject_left`, `subject_top`, `subject_width`, and `subject_height`, in pixels of the original. It is the crop: the subject, its margin, and the surroundings that bring it toward a square. An already cropped photo stores its whole frame. Width and height count pixels. All four are null, or all four are present with width and height greater than zero. A check constraint enforces that. The crop reuses this box.
 - `photos.use_edited` is true when the person picks the edit and false when they pick the original. It stays null until they choose. The pick approves the draft.
 - `edited_ebay_url` is the eBay-hosted copy of the approved edit. `replaced_on_ebay_at` is when the Seller Hub draft saved it as the first photo. `ebay_error` is the last failed replacement. Retry clears it.
 - An approved draft sends `edited_path` to eBay only when `use_edited` is true.

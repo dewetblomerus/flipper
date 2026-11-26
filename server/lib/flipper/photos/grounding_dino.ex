@@ -1,6 +1,6 @@
 defmodule Flipper.Photos.GroundingDino do
   @moduledoc """
-  Finds the product box with local Grounding DINO and crops the original.
+  Finds the product box with local Grounding DINO, then crops and brightens the original.
   """
 
   @behaviour Flipper.Photos.Editor
