@@ -16,13 +16,35 @@ defmodule Flipper.Drafts do
   alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
+  alias Flipper.Workers.ImportDrafts
   alias Flipper.Workers.RemoveEbayFields
   alias Flipper.Workers.ReplaceEbayPhoto
+
+  # The job states a person's request can move out of the paced queue.
+  @waiting [available: [:queue], scheduled: [:queue], retryable: [:queue]]
 
   @doc """
   Subscribes to every draft's messages.
   """
   def subscribe, do: Phoenix.PubSub.subscribe(Flipper.PubSub, "drafts")
+
+  @doc """
+  Subscribes to the result of each drafts list import.
+  """
+  def subscribe_import, do: Phoenix.PubSub.subscribe(Flipper.PubSub, "drafts_import")
+
+  def broadcast_import(result) do
+    Phoenix.PubSub.broadcast(Flipper.PubSub, "drafts_import", {:drafts_import, result})
+  end
+
+  @doc """
+  Queues the import a person asked for. It takes over one still waiting in the paced queue.
+  """
+  def refresh_list do
+    %{}
+    |> ImportDrafts.new(queue: :ebay, replace: @waiting)
+    |> Oban.insert()
+  end
 
   def list_drafts do
     photos = from p in Photo, order_by: p.position
@@ -806,9 +828,7 @@ defmodule Flipper.Drafts do
 
   # A person's read takes over one still waiting in the paced queue.
   defp fetch_job(%Draft{id: id}, :ebay) do
-    waiting = [available: [:queue], scheduled: [:queue], retryable: [:queue]]
-
-    FetchDraft.new(%{draft_id: id}, replace: waiting)
+    FetchDraft.new(%{draft_id: id}, replace: @waiting)
   end
 
   defp fetch_job(%Draft{id: id}, :ebay_automated) do

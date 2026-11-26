@@ -6,7 +6,7 @@ While no eBay cookie is saved, or after eBay rejects it, a popover blocks every 
 
 The cookie is saved to `~/code/flipper/ebay_cookie`, or `/code/flipper/ebay_cookie` without a home directory. A rejection is saved beside it in `ebay_cookie.rejected`. Every worktree's server uses both files and notices a change within a second.
 
-Flipper also reads the Seller Hub drafts list hourly and as each server starts: one request for up to 200 drafts. The start read also checks the cookie. A server whose cookie is missing or rejected reads nothing. The list needs its photo and Custom label (SKU) columns.
+Flipper also reads the Seller Hub drafts list hourly, as each server starts, and on Refresh Drafts: one request for up to 200 drafts. The start read also checks the cookie. A server whose cookie is missing or rejected reads nothing. The list needs its photo and Custom label (SKU) columns.
 
 Each unknown draft is added. One listed with both a SKU and a photo is read in the paced queue. Any other waits unread in `awaiting_sku` with the listed title and SKU, and is read once the list shows both. An import queues a draft's read at most once a day, and leaves a failed read to Refresh or a saved cookie. An import never writes to eBay.
 
@@ -36,7 +36,7 @@ See [eBay draft API](ebay/README.md).
 
 Pasting an id that already exists opens that draft.
 
-`/drafts` lists each draft with its first photo. `/drafts/new` pastes a URL. `/drafts/:id` opens one.
+`/drafts` lists each draft with its first photo and updates as drafts change. Refresh Drafts queues an import in the `ebay` queue, taking over one waiting in the paced queue. One import job waits or runs at a time. The page shows Refreshing, then the result. `/drafts/new` pastes a URL. `/drafts/:id` opens one.
 
 `/auto` shows one pending decision at a time as that draft's page, furthest along first, then oldest draft. A draft in `field_removals_drafted` has its removals pending, and one in `photo_edits_drafted` has a photo pick pending. The page keeps a decision while it is pending, then shows the next. With none pending, it says Nothing to decide until one arrives.
 
