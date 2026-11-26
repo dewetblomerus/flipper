@@ -65,7 +65,13 @@ erDiagram
 - A draft in `started` has not been read from eBay yet. `awaiting_photos` means it was read and it has no photos. `title` may be empty.
 - `drafts.fetch_error` is the last failed read of the Seller Hub draft. A successful read clears it.
 - `drafts.approved_removals` holds the eBay field names a person approved for removal. `removal_error` is the last failed read or removal after photo approval. Retry clears it.
-- `draft_snapshots.modules` is the Seller Hub draft as first read after photo approval, keyed by eBay module name, without upload tokens. A draft has at most one. Deleting a draft deletes it.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:d1a6a225f7bcb4ddf3591ed4e82cda4571abc31ec90b9d3b17e34155508e140e -->
+
+- `draft_snapshots.modules` is the first valid Seller Hub draft read after photo approval, keyed by eBay module name, without upload tokens. A draft has at most one. Deleting a draft deletes it.
+
+<!-- /coderabbit-ai-generated:v1 -->
 - `drafts.ebay_draft_id` is the Seller Hub `draft_id` from a pasted eBay draft URL. It is unique. See [Drafts](drafts.md).
 - `photos.position` is unique per draft. Deleting a draft deletes its photos.
 - `original_path` and `edited_path` are disk paths. The original is never replaced. The edit job crops that original to the subject box, brightens it, and writes `edited_path` and `edited_content_type`. The background stays. A rework overwrites the edit in place.

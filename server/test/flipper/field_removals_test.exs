@@ -27,8 +27,8 @@ defmodule Flipper.FieldRemovalsTest do
     assert [] = all_enqueued(worker: RemoveEbayFields)
   end
 
-  test "a snapshot is never overwritten" do
-    draft = approved_draft("22")
+  test "a valid snapshot is preserved and determines the removal proposals" do
+    draft = approved_draft("33")
 
     original = %{
       "ATTRIBUTES" => %{"attributeList" => []},
@@ -39,6 +39,28 @@ defmodule Flipper.FieldRemovalsTest do
 
     assert :ok = perform_job(DraftFieldRemovals, %{draft_id: draft.id})
     assert [%Snapshot{modules: ^original}] = Repo.all(Snapshot)
+
+    draft = Drafts.get_draft!(draft.id)
+    assert draft.state == "field_removals_drafted"
+    assert [%{name: "subtitle", value: "Original"}] = Drafts.proposed_removals(draft)
+  end
+
+  test "a valid read repairs an invalid snapshot and makes its fields available for approval" do
+    draft = approved_draft("22")
+    snapshot = Repo.insert!(%Snapshot{draft_id: draft.id, modules: %{"TITLE" => %{}}})
+
+    assert :ok = perform_job(DraftFieldRemovals, %{draft_id: draft.id})
+
+    assert %Snapshot{modules: %{"ATTRIBUTES" => %{"attributeList" => [_ | _]}}} =
+             Repo.get!(Snapshot, snapshot.id)
+
+    draft = Drafts.get_draft!(draft.id)
+    assert draft.state == "field_removals_drafted"
+
+    assert Enum.map(Drafts.proposed_removals(draft), & &1.name) == [
+             "attributes.Color",
+             "subtitle"
+           ]
   end
 
   test "a read without item specifics is not kept as the snapshot" do

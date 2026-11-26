@@ -169,6 +169,7 @@ defmodule Flipper.Drafts do
   """
   def draft_field_removals(%Draft{state: "photo_edits_approved"} = draft) do
     with {:ok, modules} <- SellerHub.read_draft(draft.ebay_draft_id),
+         {:ok, _filled} <- OptionalFields.filled(modules),
          {:ok, snapshot} <- keep_snapshot(draft, modules),
          {:ok, filled} <- OptionalFields.filled(snapshot.modules),
          {:ok, _draft} <- advance(draft.id, after_photo(filled), removal_error: nil) do
@@ -438,14 +439,22 @@ defmodule Flipper.Drafts do
     end)
   end
 
-  # A snapshot is never overwritten, so only modules that list their fields are kept.
   defp keep_snapshot(%Draft{id: id}, modules) do
-    snapshot = %Snapshot{draft_id: id, modules: modules}
+    Repo.transact(fn ->
+      # Serialize snapshot creation and repair so a retry always keeps a valid snapshot.
+      lock_draft(id)
 
-    with {:ok, _filled} <- OptionalFields.filled(modules),
-         {:ok, _snapshot} <-
-           Repo.insert(snapshot, on_conflict: :nothing, conflict_target: :draft_id) do
-      {:ok, Repo.get_by!(Snapshot, draft_id: id)}
+      case Repo.get_by(Snapshot, draft_id: id) do
+        nil -> Repo.insert(%Snapshot{draft_id: id, modules: modules})
+        %Snapshot{} = snapshot -> repair_snapshot(snapshot, modules)
+      end
+    end)
+  end
+
+  defp repair_snapshot(snapshot, modules) do
+    case OptionalFields.filled(snapshot.modules) do
+      {:ok, _filled} -> {:ok, snapshot}
+      {:error, _reason} -> snapshot |> Ecto.Changeset.change(modules: modules) |> Repo.update()
     end
   end
 
