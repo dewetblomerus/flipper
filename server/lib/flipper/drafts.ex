@@ -1,7 +1,8 @@
 defmodule Flipper.Drafts do
   @moduledoc """
-  Lists drafts, creates one from a pasted eBay draft URL, edits its photos, replaces the
-  approved edit on eBay, and removes the optional fields a person approves.
+  Lists drafts, creates them from a pasted eBay draft URL or the Seller Hub drafts list,
+  edits their photos, replaces the approved edit on eBay, and removes the optional fields a
+  person approves.
   """
 
   import Ecto.Query
@@ -15,18 +16,55 @@ defmodule Flipper.Drafts do
   alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
+  alias Flipper.Workers.ImportDrafts
   alias Flipper.Workers.RemoveEbayFields
   alias Flipper.Workers.ReplaceEbayPhoto
+
+  # The job states a person's request can move out of the paced queue.
+  @waiting [available: [:queue], scheduled: [:queue], retryable: [:queue]]
+
+  # The job states with nothing left to run.
+  @ended ["completed", "cancelled", "discarded"]
+  @lost_write "The eBay job ended before it finished."
 
   @doc """
   Subscribes to every draft's messages.
   """
   def subscribe, do: Phoenix.PubSub.subscribe(Flipper.PubSub, "drafts")
 
+  @doc """
+  Subscribes to the result of each drafts list import.
+  """
+  def subscribe_import, do: Phoenix.PubSub.subscribe(Flipper.PubSub, "drafts_import")
+
+  def broadcast_import(result) do
+    Phoenix.PubSub.broadcast(Flipper.PubSub, "drafts_import", {:drafts_import, result})
+  end
+
+  @doc """
+  Queues the import a person asked for. It takes over one still waiting in the paced queue.
+  """
+  def refresh_list do
+    %{}
+    |> ImportDrafts.new(queue: :ebay, replace: @waiting)
+    |> Oban.insert()
+  end
+
+  @doc """
+  Lists drafts: furthest along first, then the oldest eBay listing.
+  """
   def list_drafts do
     photos = from p in Photo, order_by: p.position
 
-    Repo.all(from d in Draft, order_by: [desc: d.id], preload: [photos: ^photos])
+    Repo.all(
+      from d in Draft,
+        order_by: [
+          desc: fragment("array_position(?::text[], ?::text)", ^Draft.states(), d.state),
+          asc_nulls_last: d.listed_at,
+          asc: d.id
+        ],
+        preload: [photos: ^photos]
+    )
   end
 
   def get_draft!(id) do
@@ -69,22 +107,18 @@ defmodule Flipper.Drafts do
     end
   end
 
+  # Photo work starts only once the draft has both photos and a SKU.
   def transition(%Draft{state: state} = draft, :photos_taken)
-      when state in ["started", "awaiting_photos"] do
-    Repo.transaction(fn ->
-      case update_state(draft, "photos_taken") do
-        {:ok, draft} ->
-          enqueue_edits(draft)
-          draft
-
-        {:error, reason} ->
-          Repo.rollback(reason)
-      end
-    end)
+      when state in ["started", "awaiting_sku"] do
+    if is_binary(draft.sku) and has_photos?(draft) do
+      start_photo_work(draft)
+    else
+      {:error, :invalid_transition}
+    end
   end
 
-  def transition(%Draft{state: "started"} = draft, :awaiting_photos) do
-    update_state(draft, "awaiting_photos")
+  def transition(%Draft{state: "started"} = draft, :awaiting_sku) do
+    update_state(draft, "awaiting_sku")
   end
 
   def transition(%Draft{state: "photos_taken"} = draft, :photo_edits_drafted) do
@@ -270,6 +304,17 @@ defmodule Flipper.Drafts do
 
   def retry_ebay_photo(%Draft{}), do: {:error, :nothing_to_retry}
 
+  @doc """
+  Records an error on each approved eBay write with no job left to run it.
+  """
+  def record_lost_ebay_writes do
+    Enum.each(lost_replacements(), &record_ebay_error(&1, @lost_write))
+    Enum.each(lost_removals(), &record_removal_error(&1, @lost_write))
+  end
+
+  @doc """
+  Queues each failed eBay job again. Reads are paced, since there can be many.
+  """
   def retry_failed do
     Enum.each(failed_fetches(), &retry_fetch/1)
     Enum.each(failed_replacements(), &retry_ebay_photo/1)
@@ -280,23 +325,22 @@ defmodule Flipper.Drafts do
     if has_photos?(draft) do
       :ok
     else
-      case SellerHub.fetch(draft.ebay_draft_id) do
-        {:ok, %{title: title, photo_urls: urls}} ->
-          save_fetch(draft, title, urls)
-
-        {:error, reason} ->
-          {:error, reason}
+      with {:ok, read} <- SellerHub.fetch(draft.ebay_draft_id) do
+        save_fetch(draft, read)
       end
     end
   end
 
-  def refresh(%Draft{} = draft) do
-    if has_photos?(draft) do
-      {:ok, draft}
-    else
-      with {:ok, draft} <- clear_fetch_error(draft) do
-        enqueue_fetch(draft)
-      end
+  def refresh(%Draft{} = draft), do: reread(draft, :ebay)
+
+  @doc """
+  Adds each unknown draft on the Seller Hub list. A draft is read once the list shows it
+  with both a SKU and a photo. Until then it waits in `awaiting_sku`.
+  """
+  def import_from_ebay do
+    with {:ok, listed} <- SellerHub.drafts() do
+      known = known_drafts(listed)
+      Enum.each(listed, &import_listed(&1, known[&1.ebay_draft_id]))
     end
   end
 
@@ -313,9 +357,96 @@ defmodule Flipper.Drafts do
     broadcast(id, {:draft_fetched, id})
   end
 
-  defp save_fetch(draft, title, urls) do
+  defp known_drafts(listed) do
+    ids = Enum.map(listed, & &1.ebay_draft_id)
+
+    from(d in Draft, where: d.ebay_draft_id in ^ids)
+    |> Repo.all()
+    |> Map.new(&{&1.ebay_draft_id, &1})
+  end
+
+  defp import_listed(listed, nil), do: add_listed(listed)
+
+  defp import_listed(listed, %Draft{state: "awaiting_sku"} = draft) do
+    {:ok, draft} = update_draft(draft, listed_fields(listed) ++ listed_age(listed))
+
+    if ready?(listed) do
+      {:ok, _draft} = Repo.transact(fn -> queue_due_read(lock_draft(draft.id)) end)
+    end
+  end
+
+  defp import_listed(listed, draft) do
+    {:ok, _draft} = update_draft(draft, listed_age(listed))
+  end
+
+  # The draft and its read are saved together, so no imported draft is left unread.
+  defp add_listed(listed) do
+    changeset =
+      %Draft{}
+      |> Draft.create_changeset(listed.ebay_draft_id)
+      |> Ecto.Changeset.change(listed_fields(listed) ++ listed_age(listed))
+
+    {:ok, _result} =
+      Repo.transact(fn ->
+        case Repo.insert(changeset, on_conflict: :nothing, conflict_target: :ebay_draft_id) do
+          # A paste added it first.
+          {:ok, %Draft{id: nil}} -> {:ok, :already_added}
+          {:ok, draft} -> start_listed(draft, listed)
+          {:error, reason} -> {:error, reason}
+        end
+      end)
+  end
+
+  defp start_listed(draft, listed) do
+    if ready?(listed) do
+      queue_import_read(draft)
+    else
+      transition(draft, :awaiting_sku)
+    end
+  end
+
+  # Checked on the locked row, since another import can queue the read after this one
+  # loads its drafts.
+  defp queue_due_read(%Draft{state: "awaiting_sku"} = draft) do
+    if due?(draft), do: queue_import_read(draft), else: {:ok, draft}
+  end
+
+  defp queue_due_read(draft), do: {:ok, draft}
+
+  defp queue_import_read(draft) do
+    with {:ok, draft} <- update_draft(draft, import_read_at: DateTime.utc_now()) do
+      enqueue_fetch(draft, :ebay_automated, retry: false)
+    end
+  end
+
+  defp listed_fields(%{title: title, sku: sku}) do
+    [title: blank_to_nil(title), sku: blank_to_nil(sku)]
+  end
+
+  # A date the list didn't give leaves the one already saved.
+  defp listed_age(%{listed_at: nil}), do: []
+  defp listed_age(%{listed_at: listed_at}), do: [listed_at: listed_at]
+
+  defp ready?(%{sku: sku, photo?: photo?}), do: photo? and blank_to_nil(sku) != nil
+
+  # A failed read waits for a person. The list can show a draft as ready when its page
+  # doesn't, so an import queues a draft's read at most once a day.
+  defp due?(%Draft{fetch_error: nil, import_read_at: nil}), do: true
+
+  defp due?(%Draft{fetch_error: nil, import_read_at: at}) do
+    DateTime.diff(DateTime.utc_now(), at, :hour) >= 24
+  end
+
+  defp due?(_draft), do: false
+
+  # Photos are downloaded only for a draft that also has a SKU.
+  defp save_fetch(draft, %{title: title, sku: sku, photo_urls: urls}) do
+    urls = if sku, do: urls, else: []
+
+    fields = [title: blank_to_nil(title), sku: sku, fetch_error: nil]
+
     with {:ok, files} <- download_photos(draft, urls),
-         {:ok, draft} <- persist_fetch(draft, title, files) do
+         {:ok, draft} <- persist_fetch(draft, fields, files) do
       broadcast_fetched(draft)
       :ok
     else
@@ -343,12 +474,9 @@ defmodule Flipper.Drafts do
     end)
   end
 
-  defp persist_fetch(draft, title, files) do
+  defp persist_fetch(draft, fields, files) do
     Repo.transaction(fn ->
-      {:ok, draft} =
-        draft
-        |> Ecto.Changeset.change(title: blank_to_nil(title), fetch_error: nil)
-        |> Repo.update()
+      {:ok, draft} = update_draft(draft, fields)
 
       Enum.with_index(files, 1)
       |> Enum.each(fn {{path, type}, position} ->
@@ -362,11 +490,11 @@ defmodule Flipper.Drafts do
         |> Repo.insert!()
       end)
 
-      state = if files == [], do: :awaiting_photos, else: :photos_taken
+      state = if files == [], do: :awaiting_sku, else: :photos_taken
 
       case transition(draft, state) do
         {:ok, draft} -> draft
-        {:error, :invalid_transition} when state == :awaiting_photos -> draft
+        {:error, :invalid_transition} when state == :awaiting_sku -> draft
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
@@ -376,6 +504,19 @@ defmodule Flipper.Drafts do
     draft
     |> Ecto.Changeset.change(state: state)
     |> Repo.update()
+  end
+
+  defp start_photo_work(draft) do
+    Repo.transaction(fn ->
+      case update_state(draft, "photos_taken") do
+        {:ok, draft} ->
+          enqueue_edits(draft)
+          draft
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    end)
   end
 
   defp enqueue_edits(%Draft{id: id}) do
@@ -660,11 +801,11 @@ defmodule Flipper.Drafts do
     |> Repo.insert()
     |> case do
       {:ok, draft} ->
-        enqueue_fetch(draft)
+        enqueue_fetch(draft, :ebay)
 
       {:error, changeset} ->
         if unique_ebay_draft_id?(changeset) do
-          enqueue_fetch(Repo.get_by!(Draft, ebay_draft_id: ebay_draft_id))
+          enqueue_fetch(Repo.get_by!(Draft, ebay_draft_id: ebay_draft_id), :ebay)
         else
           {:error, changeset}
         end
@@ -689,9 +830,52 @@ defmodule Flipper.Drafts do
     Repo.all(from d in Draft, where: not is_nil(d.removal_error), order_by: d.id)
   end
 
+  defp lost_replacements do
+    jobs =
+      from j in live_jobs(ReplaceEbayPhoto),
+        where: fragment("(?->>'photo_id')::bigint", j.args) == parent_as(:photo).id
+
+    Repo.all(
+      from p in Photo,
+        as: :photo,
+        join: d in assoc(p, :draft),
+        where: d.state == "photo_edits_approved" and p.use_edited,
+        where: is_nil(p.replaced_on_ebay_at) and is_nil(p.ebay_error),
+        where: not exists(jobs)
+    )
+  end
+
+  defp lost_removals do
+    jobs =
+      from j in live_jobs(RemoveEbayFields),
+        where: fragment("(?->>'draft_id')::bigint", j.args) == parent_as(:draft).id
+
+    Repo.all(
+      from d in Draft,
+        as: :draft,
+        where: d.state == "field_removals_approved" and is_nil(d.removal_error),
+        where: not exists(jobs)
+    )
+  end
+
+  defp live_jobs(worker) do
+    from j in Oban.Job,
+      where: j.worker == ^Oban.Worker.to_string(worker) and j.state not in @ended
+  end
+
   defp retry_fetch(draft) do
-    with {:ok, draft} <- refresh(draft) do
+    with {:ok, draft} <- reread(draft, :ebay_automated) do
       broadcast_changed(draft.id)
+    end
+  end
+
+  defp reread(draft, queue) do
+    if has_photos?(draft) do
+      {:ok, draft}
+    else
+      with {:ok, draft} <- clear_fetch_error(draft) do
+        enqueue_fetch(draft, queue)
+      end
     end
   end
 
@@ -701,18 +885,27 @@ defmodule Flipper.Drafts do
     |> Repo.update()
   end
 
-  defp enqueue_fetch(draft) do
+  defp enqueue_fetch(draft, queue, opts \\ []) do
     if has_photos?(draft) do
       {:ok, draft}
     else
-      %{draft_id: draft.id}
-      |> FetchDraft.new()
-      |> Oban.insert()
+      draft
+      |> fetch_job(queue)
+      |> Oban.insert(opts)
       |> case do
         {:ok, _job} -> {:ok, draft}
         {:error, reason} -> {:error, reason}
       end
     end
+  end
+
+  # A person's read takes over one still waiting in the paced queue.
+  defp fetch_job(%Draft{id: id}, :ebay) do
+    FetchDraft.new(%{draft_id: id}, replace: @waiting)
+  end
+
+  defp fetch_job(%Draft{id: id}, :ebay_automated) do
+    FetchDraft.new(%{draft_id: id}, queue: :ebay_automated)
   end
 
   defp has_photos?(%Draft{id: id}) do

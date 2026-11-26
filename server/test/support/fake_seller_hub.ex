@@ -5,20 +5,38 @@ defmodule Flipper.Ebay.FakeSellerHub do
 
   @jpeg <<0xFF, 0xD8, 0xFF, 0xD9>>
 
-  def check_session, do: :ok
-
-  def fetch("0") do
-    {:ok, %{title: "Bare item", photo_urls: []}}
+  # A test sets the drafts list, or one draft's read, in its process.
+  def drafts do
+    send(self(), :ebay_drafts_listed)
+    Process.get(:ebay_drafts, {:ok, []})
   end
 
-  def fetch("404") do
+  def fetch(ebay_draft_id) do
+    Process.get({:ebay_draft, ebay_draft_id}) || read(ebay_draft_id)
+  end
+
+  defp read("0") do
+    {:ok, %{title: "Bare item", sku: "BARE-1", photo_urls: []}}
+  end
+
+  defp read("11") do
+    {:ok,
+     %{
+       title: "Unlabelled lamp",
+       sku: nil,
+       photo_urls: ["https://i.ebayimg.com/images/g/abc/s-l1600.jpg"]
+     }}
+  end
+
+  defp read("404") do
     {:error, "eBay did not return the draft"}
   end
 
-  def fetch("22") do
+  defp read("22") do
     {:ok,
      %{
        title: "Pair of lamps",
+       sku: "PAIR-1",
        photo_urls: [
          "https://i.ebayimg.com/images/g/abc/s-l1600.jpg",
          "https://i.ebayimg.com/images/g/def/s-l1600.jpg"
@@ -26,10 +44,11 @@ defmodule Flipper.Ebay.FakeSellerHub do
      }}
   end
 
-  def fetch(_ebay_draft_id) do
+  defp read(_ebay_draft_id) do
     {:ok,
      %{
        title: "Vintage lamp",
+       sku: "LAMP-1",
        photo_urls: ["https://i.ebayimg.com/images/g/abc/s-l1600.jpg"]
      }}
   end

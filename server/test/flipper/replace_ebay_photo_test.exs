@@ -7,6 +7,7 @@ defmodule Flipper.ReplaceEbayPhotoTest do
   alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
+  alias Flipper.Workers.RecordLostEbayWrites
   alias Flipper.Workers.ReplaceEbayPhoto
 
   @new_url "https://i.ebayimg.com/images/g/new/s-l1600.png"
@@ -79,6 +80,31 @@ defmodule Flipper.ReplaceEbayPhotoTest do
     assert photo.replaced_on_ebay_at == nil
 
     assert {:ok, %Photo{ebay_error: nil}} = Drafts.retry_ebay_photo(Drafts.get_draft!(draft.id))
+  end
+
+  test "a replacement whose job ends without an error becomes retryable" do
+    {draft, photo} = edited_draft("22")
+    {:ok, _photo} = Drafts.choose_edit(photo, true)
+
+    assert :ok = perform_job(RecordLostEbayWrites, %{})
+    assert Repo.get!(Photo, photo.id).ebay_error == nil
+
+    Repo.update_all(Oban.Job, set: [state: "discarded"])
+    assert :ok = perform_job(RecordLostEbayWrites, %{})
+
+    assert is_binary(Repo.get!(Photo, photo.id).ebay_error)
+    assert {:ok, %Photo{ebay_error: nil}} = Drafts.retry_ebay_photo(Drafts.get_draft!(draft.id))
+    assert_enqueued(worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
+  end
+
+  test "a finished replacement is not a lost one" do
+    {_draft, photo} = edited_draft("22")
+    {:ok, _photo} = Drafts.choose_edit(photo, true)
+    :ok = perform_job(ReplaceEbayPhoto, %{photo_id: photo.id})
+    Repo.update_all(Oban.Job, set: [state: "completed"])
+
+    assert :ok = perform_job(RecordLostEbayWrites, %{})
+    assert Repo.get!(Photo, photo.id).ebay_error == nil
   end
 
   defp edited_draft(ebay_draft_id) do

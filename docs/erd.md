@@ -22,8 +22,11 @@ erDiagram
         bigint id PK
         string ebay_draft_id UK "not null"
         string title
+        string sku
         string state "not null"
         string fetch_error
+        datetime import_read_at
+        datetime listed_at
         string[] approved_removals
         string removal_error
         datetime inserted_at
@@ -61,9 +64,12 @@ erDiagram
 ## Notes
 
 - Primary keys are `bigint`. Timestamps are UTC instants (`utc_datetime_usec`).
-- `drafts.state` is the current state name: `started`, `awaiting_photos`, `photos_taken`, `photo_edits_drafted`, `photo_edits_approved`, `field_removals_drafted`, `field_removals_approved`, `finished`. Allowed moves live in code. A transition adds a state name or returns to an earlier one. Drafts already past that point stay where they are.
-- A draft in `started` has not been read from eBay yet. `awaiting_photos` means it was read and it has no photos. `title` may be empty.
+- `drafts.state` is the current state name: `started`, `awaiting_sku`, `photos_taken`, `photo_edits_drafted`, `photo_edits_approved`, `field_removals_drafted`, `field_removals_approved`, `finished`. Allowed moves live in code. A transition adds a state name or returns to an earlier one. Drafts already past that point stay where they are.
+- A draft in `started` has not been read from eBay yet. `awaiting_sku` means eBay showed it without both photos and a SKU. `title` and `sku` may be empty.
+- `drafts.sku` is the Seller Hub Custom label.
 - `drafts.fetch_error` is the last failed read of the Seller Hub draft. A successful read clears it.
+- `drafts.import_read_at` is when an import last queued the draft's read.
+- `drafts.listed_at` is when eBay created the draft, from the drafts list. It is null until an import lists the draft.
 - `drafts.approved_removals` holds the eBay field names a person approved for removal. `removal_error` is the last failed read or removal after photo approval. Retry clears it.
 <!-- coderabbit-ai-generated:v1 -->
 
@@ -72,11 +78,12 @@ erDiagram
 - `draft_snapshots.modules` is the first valid Seller Hub draft read after photo approval, keyed by eBay module name, without upload tokens. A draft has at most one. Deleting a draft deletes it.
 
 <!-- /coderabbit-ai-generated:v1 -->
-- `drafts.ebay_draft_id` is the Seller Hub `draft_id` from a pasted eBay draft URL. It is unique. See [Drafts](drafts.md).
+- `drafts.ebay_draft_id` is the Seller Hub `draft_id`, from a pasted eBay draft URL or the drafts list. It is unique. See [Drafts](drafts.md).
 - `photos.position` is unique per draft. Deleting a draft deletes its photos.
 - `original_path` and `edited_path` are disk paths. The original is never replaced. The edit job crops that original to the subject box, brightens it, and writes `edited_path` and `edited_content_type`. The background stays. A rework overwrites the edit in place.
 - The subject box is `subject_left`, `subject_top`, `subject_width`, and `subject_height`, in pixels of the original. It is the crop: the subject, its margin, and the surroundings that bring it toward a square. An already cropped photo stores its whole frame. Width and height count pixels. All four are null, or all four are present with width and height greater than zero. A check constraint enforces that. The crop reuses this box.
 - `photos.use_edited` is true when the person picks the edit and false when they pick the original. It stays null until they choose. The pick approves the draft.
 - `edited_ebay_url` is the eBay-hosted copy of the approved edit. `replaced_on_ebay_at` is when the Seller Hub draft saved it as the first photo. `ebay_error` is the last failed replacement. Retry clears it.
 - An approved draft sends `edited_path` to eBay only when `use_edited` is true.
+- A draft reaches `photos_taken` from `started` or `awaiting_sku` only with both photos and a SKU.
 - Reaching `photos_taken` enqueues one Oban edit job for the first photo. Later photos are not cropped. The draft moves to `photo_edits_drafted` when that photo has an edit.

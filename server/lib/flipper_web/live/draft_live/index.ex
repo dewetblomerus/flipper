@@ -10,6 +10,13 @@ defmodule FlipperWeb.DraftLive.Index do
       <.header>
         Listing Drafts
         <:actions>
+          <.button id="refresh-drafts" phx-click="refresh_drafts" disabled={@refreshing}>
+            <.icon
+              name="hero-arrow-path"
+              class={["size-5", @refreshing && "motion-safe:animate-spin"]}
+            />
+            {if @refreshing, do: "Refreshing", else: "Refresh Drafts"}
+          </.button>
           <.button variant="primary" navigate={~p"/drafts/new"}>
             <.icon name="hero-plus" /> Paste a URL
           </.button>
@@ -44,11 +51,51 @@ defmodule FlipperWeb.DraftLive.Index do
 
   @impl true
   def mount(_params, _session, socket) do
+    if connected?(socket) do
+      Drafts.subscribe()
+      Drafts.subscribe_import()
+    end
+
     {:ok,
      socket
      |> assign(:page_title, "Listing Drafts")
+     |> assign(:refreshing, false)
      |> stream(:drafts, list_drafts())}
   end
+
+  @impl true
+  def handle_event("refresh_drafts", _params, socket) do
+    case Drafts.refresh_list() do
+      {:ok, _job} ->
+        {:noreply, socket |> clear_flash() |> assign(:refreshing, true)}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Refresh failed.")}
+    end
+  end
+
+  @impl true
+  def handle_info({:drafts_import, result}, socket) do
+    {:noreply, socket |> report(result) |> reload()}
+  end
+
+  def handle_info({event, _id}, socket) when event in [:draft_fetched, :draft_changed] do
+    {:noreply, reload(socket)}
+  end
+
+  # Only a page that asked for a refresh reports how it went.
+  defp report(%{assigns: %{refreshing: false}} = socket, _result), do: socket
+
+  defp report(socket, result) do
+    socket = assign(socket, :refreshing, false)
+
+    case result do
+      :ok -> put_flash(socket, :info, "Drafts refreshed.")
+      {_failed, reason} -> put_flash(socket, :error, "Refresh failed: #{reason}")
+    end
+  end
+
+  defp reload(socket), do: stream(socket, :drafts, list_drafts(), reset: true)
 
   defp list_drafts do
     Drafts.list_drafts()

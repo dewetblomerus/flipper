@@ -45,6 +45,15 @@ defmodule Flipper.Ebay.SellerHubTest do
     assert {:ok, %{title: "Bare item", photo_urls: []}} = Client.parse(body)
   end
 
+  test "parse reads the custom label as the SKU" do
+    assert {:ok, %{sku: "A-17"}} = Client.parse(listing_with_label(~s(" A-17 ")))
+  end
+
+  test "parse has no SKU while the custom label is empty or missing" do
+    assert {:ok, %{sku: nil}} = Client.parse(listing_with_label(~s("")))
+    assert {:ok, %{sku: nil}} = Client.parse(~s({"title":{"value":"Bare item"},"pictures":[]}))
+  end
+
   test "parse fails when the page has neither a title nor photos" do
     assert {:error, "eBay draft had no title or photos"} = Client.parse("<html></html>")
   end
@@ -180,5 +189,11 @@ defmodule Flipper.Ebay.SellerHubTest do
     assert {:ok, ^url} = Client.uploaded_url("VERSION:2;" <> url)
     assert {:error, _} = Client.uploaded_url("VERSION:2;https://example.com/x.png")
     assert {:error, _} = Client.uploaded_url("ERROR")
+  end
+
+  defp listing_with_label(value) do
+    ~s({"TITLE":{"_type":"TitleViewHelix",) <>
+      ~s("titleField":{"name":"title","value":"Vintage lamp"},) <>
+      ~s("customLabelField":{"name":"customLabel","value":#{value}}}})
   end
 end

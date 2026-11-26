@@ -3,6 +3,7 @@ defmodule Flipper.Ebay.SellerHub.Client do
   Reads and writes a Seller Hub draft through its listing page, with the browser cookie.
   """
 
+  alias Flipper.Ebay.SellerHub.DraftList
   alias Flipper.Ebay.SellerHub.OptionalFields
   alias Flipper.Ebay.Session
 
@@ -30,12 +31,14 @@ defmodule Flipper.Ebay.SellerHub.Client do
   ]
 
   @doc """
-  Opens the drafts page, so a sign-in redirect rejects the cookie.
+  Lists up to 200 drafts from one read of the drafts page.
   """
-  def check_session(opts \\ []) do
+  def drafts(opts \\ []) do
+    url = @drafts_url <> "?limit=200"
+
     with {:ok, cookie} <- signed_in_cookie(opts),
-         {:ok, _body} <- fetch_page(@drafts_url, cookie, Keyword.delete(opts, :cookie), 5) do
-      :ok
+         {:ok, body} <- fetch_page(url, cookie, Keyword.delete(opts, :cookie), 5) do
+      DraftList.parse(body)
     end
   end
 
@@ -97,7 +100,7 @@ defmodule Flipper.Ebay.SellerHub.Client do
     if is_nil(title) and urls == [] do
       {:error, "eBay draft had no title or photos"}
     else
-      {:ok, %{title: title, photo_urls: urls}}
+      {:ok, %{title: title, sku: sku(body), photo_urls: urls}}
     end
   end
 
@@ -250,19 +253,39 @@ defmodule Flipper.Ebay.SellerHub.Client do
   end
 
   defp modules(body) do
-    modules =
-      @module_key
-      |> Regex.scan(body, return: :index)
-      |> Enum.reduce(%{}, fn [{start, length}, {name_start, name_length}], modules ->
-        name = binary_part(body, name_start, name_length)
-        put_module(modules, name, body, start + length)
-      end)
-
-    case modules do
-      %{"ATTRIBUTES" => _, "TITLE" => _} -> {:ok, modules}
+    case data_modules(body) do
+      %{"ATTRIBUTES" => _, "TITLE" => _} = modules -> {:ok, modules}
       _ -> {:error, "eBay listing page had no draft"}
     end
   end
+
+  defp data_modules(body) do
+    @module_key
+    |> Regex.scan(body, return: :index)
+    |> Enum.reduce(%{}, fn [{start, length}, {name_start, name_length}], modules ->
+      name = binary_part(body, name_start, name_length)
+      put_module(modules, name, body, start + length)
+    end)
+  end
+
+  # eBay calls the SKU the custom label.
+  defp sku(body) do
+    case data_modules(body) do
+      %{"TITLE" => %{"customLabelField" => %{"value" => value}}} -> label(value)
+      _ -> nil
+    end
+  end
+
+  defp label([value | _]), do: label(value)
+
+  defp label(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      label -> label
+    end
+  end
+
+  defp label(_value), do: nil
 
   # skip_validation ignores every field but photos, so removals use the main route.
   defp save_removal(ebay_draft_id, names, srt, cookie, opts) do
@@ -371,10 +394,13 @@ defmodule Flipper.Ebay.SellerHub.Client do
 
       {:ok, %{status: 200, body: body}} when is_binary(body) ->
         if challenge_page?(body) do
-          {:error, "eBay asked for a browser check"}
+          turned_away(cookie, "eBay asked for a browser check")
         else
           {:ok, body}
         end
+
+      {:ok, %{status: status}} when status in [403, 429] ->
+        turned_away(cookie, "eBay returned #{status}")
 
       {:ok, %{status: status}} ->
         {:error, "eBay returned #{status}"}
@@ -389,11 +415,10 @@ defmodule Flipper.Ebay.SellerHub.Client do
 
     cond do
       sign_in?(next) ->
-        Session.reject(cookie)
-        {:error, "eBay session is not signed in"}
+        turned_away(cookie, "eBay session is not signed in")
 
       challenge?(next) ->
-        {:error, "eBay asked for a browser check"}
+        turned_away(cookie, "eBay asked for a browser check")
 
       ebay_page?(next) ->
         fetch_page(next, cookie, opts, hops - 1)
@@ -401,6 +426,12 @@ defmodule Flipper.Ebay.SellerHub.Client do
       true ->
         {:error, redirect_error(status, next)}
     end
+  end
+
+  # Rejecting the cookie stops unattended requests until a person saves a new one.
+  defp turned_away(cookie, reason) do
+    Session.reject(cookie)
+    {:error, reason}
   end
 
   defp redirect_error(status, url) do
