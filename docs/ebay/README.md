@@ -16,6 +16,7 @@ Facts here come from live eBay on 2026-11-25. "From the page" marks what the pag
 - The seller's browser cookie authenticates every request.
 - A signed-out cookie redirects to sign-in.
 - From the client: a `/splashui/challenge` redirect or "Pardon Our Interruption" is a browser check.
+- From the client: a sign-in redirect, a browser check, 401, 403, or 429 [stops every request](../drafts.md) until a cookie is saved.
 - The drafts list is `https://www.ebay.com/sh/lst/drafts`.
 - The client reads the page, uploads photos, and saves photos and fields from the server.
 

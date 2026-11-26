@@ -29,7 +29,7 @@ defmodule Flipper.Workers.FetchDraft do
     end
   end
 
-  # An unattended read sends eBay nothing while the cookie needs a person.
+  # An unattended read is cancelled, not retried, while the cookie needs a person.
   defp blocked?(%Oban.Job{queue: "ebay_automated"}, %{photos: []}), do: Session.status() != :ok
   defp blocked?(_job, _draft), do: false
 

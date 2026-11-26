@@ -170,7 +170,7 @@ defmodule Flipper.ImportDraftsTest do
 
   test "a rejected cookie stops the list read and unattended draft reads" do
     {:ok, draft} = paste("1")
-    :ok = Session.reject("secret-value")
+    :ok = Session.reject("secret-value", 429, "eBay returned 429")
 
     assert {:cancel, _} = perform_job(ImportDrafts, %{})
     assert {:cancel, _} = ImportDrafts.run()

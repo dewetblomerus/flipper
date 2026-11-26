@@ -1,6 +1,7 @@
 defmodule Flipper.Ebay.SellerHub.Client do
   @moduledoc """
   Reads and writes a Seller Hub draft through its listing page, with the browser cookie.
+  Once eBay refuses the cookie, nothing is sent until a cookie is saved.
   """
 
   alias Flipper.Ebay.SellerHub.DraftList
@@ -9,6 +10,8 @@ defmodule Flipper.Ebay.SellerHub.Client do
 
   @image_types ~w(image/jpeg image/png image/gif image/webp image/avif image/heic)
   @drafts_url "https://www.ebay.com/sh/lst/drafts"
+  @redirect_statuses [301, 302, 303, 307, 308]
+  @refused_statuses [401, 403, 429]
   # Where each of the page's data modules starts. TextualDisplay objects are labels.
   @module_key ~r/"([A-Z][A-Z0-9_]+)":(?=\{"_type":"(?!TextualDisplay")[A-Za-z0-9]+")/
   @secret_keys ~w(epsData srt csrfToken)
@@ -60,8 +63,18 @@ defmodule Flipper.Ebay.SellerHub.Client do
     end
   end
 
-  def download(url) when is_binary(url) do
-    case Req.get(url, decode_body: false, redirect: true) do
+  @doc """
+  Downloads a photo. It sends no cookie, but stops while the saved one is rejected.
+  """
+  def download(url, opts \\ []) when is_binary(url) do
+    case allowed(Session.cookie()) do
+      :ok -> download_photo(url, opts)
+      {:error, {:refused, reason}} -> {:error, reason}
+    end
+  end
+
+  defp download_photo(url, opts) do
+    case Req.get(url, Keyword.merge([decode_body: false, redirect: true], opts)) do
       {:ok, %{status: 200, body: body, headers: headers}} ->
         type = media_type(headers)
 
@@ -200,6 +213,8 @@ defmodule Flipper.Ebay.SellerHub.Client do
     req_opts =
       Keyword.merge(
         [
+          method: :post,
+          url: url,
           headers: [{"cookie", cookie} | api_headers()],
           form_multipart:
             fields ++ [{"Filedata", {data, filename: "blob", content_type: content_type}}],
@@ -210,9 +225,10 @@ defmodule Flipper.Ebay.SellerHub.Client do
         Keyword.delete(opts, :cookie)
       )
 
-    case Req.post(url, req_opts) do
+    case send_request(cookie, req_opts) do
       {:ok, %{status: 200, body: body}} when is_binary(body) -> uploaded_url(body)
       {:ok, %{status: status}} -> {:error, "eBay photo upload returned #{status}"}
+      {:error, {:refused, reason}} -> {:error, reason}
       {:error, _reason} -> {:error, "eBay photo upload failed"}
     end
   end
@@ -305,6 +321,8 @@ defmodule Flipper.Ebay.SellerHub.Client do
     req_opts =
       Keyword.merge(
         [
+          method: :put,
+          url: url,
           headers: [{"cookie", cookie}, {"srt", srt} | api_headers()],
           json: Map.merge(request, fields),
           decode_body: false,
@@ -314,9 +332,10 @@ defmodule Flipper.Ebay.SellerHub.Client do
         Keyword.delete(opts, :cookie)
       )
 
-    case Req.put(url, req_opts) do
+    case send_request(cookie, req_opts) do
       {:ok, %{status: status}} when status in [200, 204] -> :ok
       {:ok, %{status: status}} -> {:error, "eBay draft save returned #{status}"}
+      {:error, {:refused, reason}} -> {:error, reason}
       {:error, _reason} -> {:error, "eBay draft save failed"}
     end
   end
@@ -364,21 +383,17 @@ defmodule Flipper.Ebay.SellerHub.Client do
 
   defp fetch_page(url, cookie, opts, hops) do
     case get(url, cookie, opts) do
-      {:ok, %{status: status, headers: headers}} when status in [301, 302, 303, 307, 308] ->
+      {:ok, %{status: status, headers: headers}} when status in @redirect_statuses ->
         follow(url, header(headers, "location"), cookie, opts, hops, status)
 
       {:ok, %{status: 200, body: body}} when is_binary(body) ->
-        if challenge_page?(body) do
-          turned_away(cookie, "eBay asked for a browser check")
-        else
-          {:ok, body}
-        end
-
-      {:ok, %{status: status}} when status in [403, 429] ->
-        turned_away(cookie, "eBay returned #{status}")
+        {:ok, body}
 
       {:ok, %{status: status}} ->
         {:error, "eBay returned #{status}"}
+
+      {:error, {:refused, reason}} ->
+        {:error, reason}
 
       {:error, _reason} ->
         {:error, "eBay request failed"}
@@ -388,25 +403,11 @@ defmodule Flipper.Ebay.SellerHub.Client do
   defp follow(current, location, cookie, opts, hops, status) do
     next = next_url(current, location)
 
-    cond do
-      sign_in?(next) ->
-        turned_away(cookie, "eBay session is not signed in")
-
-      challenge?(next) ->
-        turned_away(cookie, "eBay asked for a browser check")
-
-      ebay_page?(next) ->
-        fetch_page(next, cookie, opts, hops - 1)
-
-      true ->
-        {:error, redirect_error(status, next)}
+    if ebay_page?(next) do
+      fetch_page(next, cookie, opts, hops - 1)
+    else
+      {:error, redirect_error(status, next)}
     end
-  end
-
-  # Rejecting the cookie stops unattended requests until a person saves a new one.
-  defp turned_away(cookie, reason) do
-    Session.reject(cookie)
-    {:error, reason}
   end
 
   defp redirect_error(status, url) do
@@ -423,6 +424,8 @@ defmodule Flipper.Ebay.SellerHub.Client do
     req_opts =
       Keyword.merge(
         [
+          method: :get,
+          url: url,
           headers: [{"cookie", cookie} | @browser_headers],
           redirect: false,
           decode_body: false,
@@ -431,7 +434,41 @@ defmodule Flipper.Ebay.SellerHub.Client do
         opts
       )
 
-    Req.get(url, req_opts)
+    send_request(cookie, req_opts)
+  end
+
+  # Every request that carries the cookie goes through here.
+  defp send_request(cookie, req_opts) do
+    with :ok <- allowed(cookie),
+         {:ok, response} <- Req.request(req_opts) do
+      case refusal(req_opts[:url], response) do
+        nil ->
+          {:ok, response}
+
+        reason ->
+          Session.reject(cookie, response.status, reason)
+          {:error, {:refused, reason}}
+      end
+    end
+  end
+
+  defp allowed(cookie) do
+    case Session.rejection(cookie) do
+      nil -> :ok
+      %{error: reason} -> {:error, {:refused, reason}}
+    end
+  end
+
+  # How eBay turns a cookie away. Server errors and network failures are not refusals.
+  defp refusal(url, %{status: status, headers: headers, body: body}) do
+    next = if status in @redirect_statuses, do: next_url(url, header(headers, "location"))
+
+    cond do
+      sign_in?(next) -> "eBay session is not signed in"
+      challenge?(next) or challenge_page?(body) -> "eBay asked for a browser check"
+      status in @refused_statuses -> "eBay returned #{status}"
+      true -> nil
+    end
   end
 
   defp next_url(current, location) when is_binary(current) and is_binary(location) do

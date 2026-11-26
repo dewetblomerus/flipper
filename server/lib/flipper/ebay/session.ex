@@ -1,6 +1,6 @@
 defmodule Flipper.Ebay.Session do
   @moduledoc """
-  Keeps the seller's eBay cookie for Seller Hub requests, and whether eBay rejected it.
+  Keeps the seller's eBay cookie for Seller Hub requests, and why eBay rejected it.
 
   Both are files, shared by every server on the machine. Each server watches them and
   tells its subscribers about a change.
@@ -21,6 +21,16 @@ defmodule Flipper.Ebay.Session do
 
   def status, do: status(cookie())
 
+  @doc """
+  Returns `%{status: status, error: reason}` while eBay rejects the cookie, or nil. A
+  rejection holding only the cookie's digest has a nil status.
+  """
+  def rejection(cookie \\ cookie())
+
+  def rejection(nil), do: nil
+
+  def rejection(cookie), do: parse_rejection(read(rejected_path()), digest(cookie))
+
   def subscribe do
     Phoenix.PubSub.subscribe(Flipper.PubSub, @topic)
   end
@@ -37,9 +47,13 @@ defmodule Flipper.Ebay.Session do
     end
   end
 
-  def reject(cookie) when is_binary(cookie) do
+  @doc """
+  Saves eBay's response to the current cookie. A rejection of any other cookie is ignored.
+  """
+  def reject(cookie, status, error) when is_binary(cookie) do
     if cookie == cookie() do
-      write(rejected_path(), digest(cookie))
+      rejection = %{cookie: digest(cookie), status: status, error: error}
+      write(rejected_path(), Jason.encode!(rejection))
       refresh()
     else
       :ok
@@ -82,13 +96,26 @@ defmodule Flipper.Ebay.Session do
   # A digest keeps the cookie out of the process state and its crash reports.
   defp snapshot do
     cookie = cookie()
-    {status(cookie), cookie && digest(cookie)}
+    {cookie && digest(cookie), rejection(cookie)}
   end
 
   defp status(nil), do: :missing
 
-  defp status(cookie) do
-    if read(rejected_path()) == digest(cookie), do: :rejected, else: :ok
+  defp status(cookie), do: if(rejection(cookie), do: :rejected, else: :ok)
+
+  defp parse_rejection(nil, _digest), do: nil
+
+  # Servers on this machine can run code that saves only the digest.
+  defp parse_rejection(digest, digest), do: %{status: nil, error: "eBay refused the cookie"}
+
+  defp parse_rejection(value, digest) do
+    case Jason.decode(value) do
+      {:ok, %{"cookie" => ^digest, "status" => status, "error" => error}} ->
+        %{status: status, error: error}
+
+      _ ->
+        nil
+    end
   end
 
   defp digest(cookie), do: :sha256 |> :crypto.hash(cookie) |> Base.encode16()
