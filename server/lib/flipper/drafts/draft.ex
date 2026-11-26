@@ -15,7 +15,7 @@ defmodule Flipper.Drafts.Draft do
     field :import_read_at, :utc_datetime_usec
     field :listed_at, :utc_datetime_usec
     field :approved_removals, {:array, :string}
-    field :removal_error, :string
+    field :ebay_error, :string
     has_many :photos, Flipper.Drafts.Photo
 
     timestamps(type: :utc_datetime_usec)

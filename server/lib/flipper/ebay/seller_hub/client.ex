@@ -112,39 +112,21 @@ defmodule Flipper.Ebay.SellerHub.Client do
     end
   end
 
-  def set_first_photo(ebay_draft_id, url, opts \\ []) do
-    with {:ok, cookie} <- signed_in_cookie(opts),
-         {:ok, body} <- listing_page(ebay_draft_id, cookie, opts),
-         {:ok, srt} <- save_token(body),
-         {:ok, photos} <- draft_photos(body) do
-      save_photos(ebay_draft_id, [url | Enum.drop(photos, 1)], srt, cookie, opts)
-    end
-  end
-
   @doc """
-  Reads every data module of the draft, without upload tokens.
+  Replaces the first photo and removes the named optional fields in one save. `:photo` is a
+  hosted URL, or nil to keep the photos. Removals are confirmed by reading the draft back.
   """
-  def read_draft(ebay_draft_id, opts \\ []) do
-    with {:ok, cookie} <- signed_in_cookie(opts),
-         {:ok, body} <- listing_page(ebay_draft_id, cookie, opts) do
-      modules(body)
-    end
-  end
+  def update_draft(ebay_draft_id, changes, opts \\ [])
 
-  @doc """
-  Removes the named optional fields in one save, then reads the draft back to confirm.
-  """
-  def remove_fields(ebay_draft_id, names, opts \\ [])
+  def update_draft(_ebay_draft_id, %{photo: nil, remove: []}, _opts), do: :ok
 
-  def remove_fields(_ebay_draft_id, [], _opts), do: :ok
-
-  def remove_fields(ebay_draft_id, names, opts) do
+  def update_draft(ebay_draft_id, %{photo: photo, remove: names}, opts) do
     with {:ok, cookie} <- signed_in_cookie(opts),
          {:ok, body} <- listing_page(ebay_draft_id, cookie, opts),
          {:ok, srt} <- draft_token(body),
-         :ok <- save_removal(ebay_draft_id, names, srt, cookie, opts),
-         {:ok, saved} <- listing_page(ebay_draft_id, cookie, opts) do
-      confirm_removed(saved, names)
+         {:ok, fields} <- save_fields(body, photo, names),
+         :ok <- put_draft(ebay_draft_id, fields, srt, cookie, opts) do
+      confirm_removed(ebay_draft_id, names, cookie, opts)
     end
   end
 
@@ -158,21 +140,11 @@ defmodule Flipper.Ebay.SellerHub.Client do
   end
 
   @doc """
-  The token for the `skip_validation` route, which saves photos.
-  """
-  def save_token(body) do
-    token(body, ~S|"/lstng/api/listing_draft/:draftId(\\d+)/skip_validation":"|)
-  end
-
-  @doc """
-  The token for the main draft route, which saves every other field.
+  The token for the main draft route, which saves photos and fields.
   """
   def draft_token(body) do
-    token(body, ~S|"/lstng/api/listing_draft/:draftId(\\d+)":"|)
-  end
-
-  defp token(body, key) do
     text = String.replace(body, "&quot;", ~s("))
+    key = ~S|"/lstng/api/listing_draft/:draftId(\\d+)":"|
 
     with [_, rest] <- String.split(text, key, parts: 2),
          [token | _] when token != "" <- String.split(rest, ~s("), parts: 2) do
@@ -245,11 +217,13 @@ defmodule Flipper.Ebay.SellerHub.Client do
     end
   end
 
-  defp save_photos(ebay_draft_id, pictures, srt, cookie, opts) do
-    url =
-      "https://www.ebay.com/lstng/api/listing_draft/#{ebay_draft_id}/skip_validation?mode=SellLikeItem"
+  defp save_fields(_body, nil, names), do: {:ok, OptionalFields.removal(names)}
 
-    put_draft(url, %{pictures: pictures}, srt, cookie, opts)
+  # `pictures` is the whole list, so the other photos are saved with the new first one.
+  defp save_fields(body, photo, names) do
+    with {:ok, photos} <- draft_photos(body) do
+      {:ok, Map.put(OptionalFields.removal(names), :pictures, [photo | Enum.drop(photos, 1)])}
+    end
   end
 
   defp modules(body) do
@@ -287,16 +261,12 @@ defmodule Flipper.Ebay.SellerHub.Client do
 
   defp label(_value), do: nil
 
-  # skip_validation ignores every field but photos, so removals use the main route.
-  defp save_removal(ebay_draft_id, names, srt, cookie, opts) do
-    url = "https://www.ebay.com/lstng/api/listing_draft/#{ebay_draft_id}?mode=SellLikeItem"
-
-    put_draft(url, OptionalFields.removal(names), srt, cookie, opts)
-  end
-
   # A success status does not prove a field changed.
-  defp confirm_removed(body, names) do
-    with {:ok, modules} <- modules(body),
+  defp confirm_removed(_ebay_draft_id, [], _cookie, _opts), do: :ok
+
+  defp confirm_removed(ebay_draft_id, names, cookie, opts) do
+    with {:ok, body} <- listing_page(ebay_draft_id, cookie, opts),
+         {:ok, modules} <- modules(body),
          {:ok, kept} <- OptionalFields.still_filled(modules, names) do
       case kept do
         [] -> :ok
@@ -323,7 +293,9 @@ defmodule Flipper.Ebay.SellerHub.Client do
   defp redact(list) when is_list(list), do: Enum.map(list, &redact/1)
   defp redact(value), do: value
 
-  defp put_draft(url, fields, srt, cookie, opts) do
+  defp put_draft(ebay_draft_id, fields, srt, cookie, opts) do
+    url = "https://www.ebay.com/lstng/api/listing_draft/#{ebay_draft_id}?mode=SellLikeItem"
+
     request = %{
       removedFields: [],
       requestId: Ecto.UUID.generate(),
@@ -368,9 +340,12 @@ defmodule Flipper.Ebay.SellerHub.Client do
     end
   end
 
+  # The data modules carry no upload tokens.
   defp request(ebay_draft_id, cookie, opts) do
-    with {:ok, body} <- listing_page(ebay_draft_id, cookie, opts) do
-      parse(body)
+    with {:ok, body} <- listing_page(ebay_draft_id, cookie, opts),
+         {:ok, draft} <- parse(body),
+         {:ok, modules} <- modules(body) do
+      {:ok, Map.put(draft, :modules, modules)}
     end
   end
 

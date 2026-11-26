@@ -6,13 +6,12 @@ defmodule FlipperWeb.DraftLiveTest do
   import Phoenix.LiveViewTest
 
   alias Flipper.Drafts
+  alias Flipper.Drafts.Draft
   alias Flipper.Drafts.Photo
   alias Flipper.Repo
-  alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
-  alias Flipper.Workers.RemoveEbayFields
-  alias Flipper.Workers.ReplaceEbayPhoto
+  alias Flipper.Workers.UpdateEbayDraft
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022"
 
@@ -133,21 +132,20 @@ defmodule FlipperWeb.DraftLiveTest do
       assert ["image/jpeg" <> _] = get_resp_header(conn, "content-type")
     end
 
-    test "later photos stay original while the first photo is edited", %{conn: conn} do
+    test "shows only the first photo", %{conn: conn} do
       {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=22")
       {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
       assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
 
       [first, second] = Drafts.get_draft!(draft.id).photos
       assert has_element?(view, "#photo-#{first.id}-edited", "Editing")
-      refute has_element?(view, "#photo-#{second.id}-edited")
+      refute has_element?(view, "#photo-#{second.id}")
 
       assert :ok = perform_job(EditPhoto, %{photo_id: first.id})
       html = render(view)
       assert html =~ "photo_edits_drafted"
       assert html =~ "/photos/#{first.id}/edited"
-      refute has_element?(view, "#photo-#{second.id}-edited")
-      assert has_element?(view, "#photo-#{second.id} img")
+      refute has_element?(view, "#photo-#{second.id}")
     end
 
     test "shows the title and photos when the fetch finishes", %{conn: conn} do
@@ -188,108 +186,79 @@ defmodule FlipperWeb.DraftLiveTest do
       assert [_] = all_enqueued(worker: EditPhoto, args: %{photo_id: photo.id})
     end
 
-    test "picking the edit approves it and replaces it on eBay", %{conn: conn} do
-      {:ok, draft} = Drafts.paste_url(@url)
+    test "lists the fields to remove below the photo", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=22")
       {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+      refute has_element?(view, "#field-removals")
+
       assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
-      photo = hd(Drafts.get_draft!(draft.id).photos)
-      assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+
+      first = hd(Drafts.get_draft!(draft.id).photos)
+      assert has_element?(view, "#photo-#{first.id} ~ #field-removals", "Color: Black")
+      assert has_element?(view, "#field-removals", "Subtitle: Works")
+      assert has_element?(view, "#field-removals", "Picking a photo also removes these fields")
+      refute has_element?(view, "#field-removals", "Brand")
+      refute has_element?(view, "#field-removals input")
+    end
+
+    test "picking the edit updates the eBay draft and finishes it", %{conn: conn} do
+      {view, draft, photo} = edited_view(conn, "22")
 
       view |> element("#photo-#{photo.id}-edited") |> render_click()
       assert Repo.get!(Photo, photo.id).use_edited == true
-      assert Drafts.get_draft!(draft.id).state == "photo_edits_approved"
+      assert Drafts.get_draft!(draft.id).state == "field_removals_approved"
       assert has_element?(view, "#photo-#{photo.id}-edited[aria-pressed='true'][disabled]")
       assert has_element?(view, "#photo-#{photo.id}-original[disabled]")
       refute has_element?(view, "#redo-edits")
-      assert has_element?(view, "#ebay-status", "Replacing on eBay")
+      assert has_element?(view, "#ebay-status", "Updating the eBay draft")
+      assert has_element?(view, "#field-removals", "Color: Black")
+      refute has_element?(view, "#field-removals", "Picking a photo")
 
-      assert :ok = perform_job(ReplaceEbayPhoto, %{photo_id: photo.id})
-      assert has_element?(view, "#ebay-status", "Replaced on eBay")
+      assert :ok = perform_job(UpdateEbayDraft, %{draft_id: draft.id})
+      assert has_element?(view, "#ebay-status", "eBay draft updated")
+      assert has_element?(view, "#field-removals", "Removed fields")
+      assert has_element?(view, "#photo-#{photo.id}-original[disabled]")
     end
 
-    test "picking the original approves it without replacing a photo", %{conn: conn} do
-      {:ok, draft} = Drafts.paste_url(@url)
-      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
-      assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
-      photo = hd(Drafts.get_draft!(draft.id).photos)
-      assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+    test "picking the original approves it and the removals", %{conn: conn} do
+      {view, draft, photo} = edited_view(conn, "22")
 
       view |> element("#photo-#{photo.id}-original") |> render_click()
       assert Repo.get!(Photo, photo.id).use_edited == false
-      assert Drafts.get_draft!(draft.id).state == "photo_edits_approved"
       assert has_element?(view, "#photo-#{photo.id}-original[aria-pressed='true'][disabled]")
-      assert has_element?(view, "#ebay-status", "Reading the eBay draft")
-      refute has_element?(view, "#field-removals")
-      assert [] = all_enqueued(worker: ReplaceEbayPhoto)
+      assert has_element?(view, "#ebay-status", "Updating the eBay draft")
+      assert [_] = all_enqueued(worker: UpdateEbayDraft, args: %{draft_id: draft.id})
     end
 
-    test "a person reviews the removals, keeps one, and finishes the draft", %{conn: conn} do
-      {view, draft, photo} = reviewing_view(conn, "22")
-
-      assert has_element?(view, "#removal-0[checked]")
-      assert has_element?(view, "#removal-1[checked]")
-      assert has_element?(view, "#field-removals", "Color: Black")
-      assert has_element?(view, "#photo-#{photo.id}-original[disabled]")
-      refute has_element?(view, "#redo-edits")
-
-      view
-      |> form("#field-removals-form", %{"remove" => %{"0" => "false"}})
-      |> render_change()
-
-      Phoenix.PubSub.broadcast(Flipper.PubSub, "draft:#{draft.id}", {:draft_changed, draft.id})
-      _ = :sys.get_state(view.pid)
-      refute has_element?(view, "#removal-0[checked]")
-      assert has_element?(view, "#removal-1[checked]")
-
-      view |> form("#field-removals-form") |> render_submit()
-      assert Drafts.get_draft!(draft.id).approved_removals == ["subtitle"]
-      assert has_element?(view, "#ebay-status", "Removing fields on eBay")
-      assert has_element?(view, "#removal-1[checked][disabled]")
-      refute has_element?(view, "#approve-removals")
-
-      assert :ok = perform_job(RemoveEbayFields, %{draft_id: draft.id})
-      assert has_element?(view, "#ebay-status", "eBay draft updated")
-      assert has_element?(view, "#photo-#{photo.id}-original[disabled]")
-      refute has_element?(view, "#redo-edits")
-    end
-
-    test "a failed removal shows the error and retries", %{conn: conn} do
-      {view, draft, _photo} = reviewing_view(conn, "501")
-      view |> form("#field-removals-form") |> render_submit()
-
-      assert {:error, _} = perform_job(RemoveEbayFields, %{draft_id: draft.id}, attempt: 3)
-      assert has_element?(view, "#ebay-status", "eBay returned 501")
-
-      Repo.update_all(from(j in Oban.Job, where: j.state == "available"),
-        set: [state: "discarded"]
-      )
-
-      view |> element("#retry-removals") |> render_click()
-      assert has_element?(view, "#ebay-status", "Removing fields on eBay")
-      refute has_element?(view, "#retry-removals")
-      assert [_] = all_enqueued(worker: RemoveEbayFields, args: %{draft_id: draft.id})
-    end
-
-    test "a failed eBay replacement shows the error and retries", %{conn: conn} do
-      {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=500")
-      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+    test "lists only the approved fields", %{conn: conn} do
+      {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=22")
       assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
-      photo = hd(Drafts.get_draft!(draft.id).photos)
-      assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+
+      Repo.get!(Draft, draft.id)
+      |> Ecto.Changeset.change(state: "finished", approved_removals: ["subtitle"])
+      |> Repo.update!()
+
+      {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+
+      assert has_element?(view, "#field-removals", "Subtitle: Works")
+      refute has_element?(view, "#field-removals", "Color")
+    end
+
+    test "a failed eBay update shows the error and retries", %{conn: conn} do
+      {view, draft, photo} = edited_view(conn, "500")
       view |> element("#photo-#{photo.id}-edited") |> render_click()
 
-      assert {:error, _} =
-               perform_job(ReplaceEbayPhoto, %{photo_id: photo.id}, attempt: 3, max_attempts: 3)
-
+      assert {:error, _} = perform_job(UpdateEbayDraft, %{draft_id: draft.id}, attempt: 3)
       assert has_element?(view, "#ebay-status", "eBay returned 500")
 
       Repo.update_all(from(j in Oban.Job, where: j.state == "available"),
         set: [state: "discarded"]
       )
 
-      view |> element("#retry-ebay-photo") |> render_click()
-      assert has_element?(view, "#ebay-status", "Replacing on eBay")
-      assert [_] = all_enqueued(worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
+      view |> element("#retry-ebay") |> render_click()
+      assert has_element?(view, "#ebay-status", "Updating the eBay draft")
+      refute has_element?(view, "#retry-ebay")
+      assert [_] = all_enqueued(worker: UpdateEbayDraft, args: %{draft_id: draft.id})
     end
 
     test "serves the edited photo and refuses a path outside the photo directory", %{conn: conn} do
@@ -316,14 +285,12 @@ defmodule FlipperWeb.DraftLiveTest do
     end
   end
 
-  defp reviewing_view(conn, ebay_draft_id) do
+  defp edited_view(conn, ebay_draft_id) do
     {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=#{ebay_draft_id}")
     {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
     assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
     photo = hd(Drafts.get_draft!(draft.id).photos)
     assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
-    view |> element("#photo-#{photo.id}-original") |> render_click()
-    assert :ok = perform_job(DraftFieldRemovals, %{draft_id: draft.id})
     {view, draft, photo}
   end
 

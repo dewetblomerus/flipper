@@ -16,7 +16,6 @@ defmodule Flipper.Drafts.Photo do
     field :use_edited, :boolean
     field :edited_ebay_url, :string
     field :replaced_on_ebay_at, :utc_datetime_usec
-    field :ebay_error, :string
 
     timestamps(type: :utc_datetime_usec)
   end

@@ -1,6 +1,6 @@
 defmodule Flipper.Ebay.SellerHub.OptionalFields do
   @moduledoc """
-  The sell-similar fields a person may remove from a draft: Recommended and Additional item
+  The sell-similar fields Flipper removes from a draft: Recommended and Additional item
   specifics, the subtitle, and the UPC. Required specifics, Brand, and every other field stay.
 
   A field is identified by the name eBay saves it under.

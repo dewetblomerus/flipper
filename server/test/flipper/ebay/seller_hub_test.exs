@@ -3,6 +3,11 @@ defmodule Flipper.Ebay.SellerHubTest do
 
   alias Flipper.Ebay.SellerHub.Client
 
+  # The least a listing page holds to be read as a draft.
+  @draft_page ~s({"title":{"value":"Vintage lamp"},"pictures":[],) <>
+                ~s("TITLE":{"_type":"TitleViewHelix"},) <>
+                ~s("ATTRIBUTES":{"_type":"AttributesViewHelix"}})
+
   test "parse reads the title and full-size photo urls" do
     body = """
     <html>
@@ -58,11 +63,21 @@ defmodule Flipper.Ebay.SellerHubTest do
     assert {:error, "eBay draft had no title or photos"} = Client.parse("<html></html>")
   end
 
+  test "fetch fails on a page without a draft's modules" do
+    stub =
+      stub_ebay(fn conn ->
+        Plug.Conn.send_resp(conn, 200, ~s({"title":{"value":"Vintage lamp"},"pictures":[]}))
+      end)
+
+    assert {:error, "eBay listing page had no draft"} =
+             Client.fetch("1", cookie: "session", plug: stub)
+  end
+
   test "fetch follows an eBay redirect" do
     stub =
       stub_ebay(fn conn ->
         if conn.query_string =~ "mode=AddItem" do
-          Plug.Conn.send_resp(conn, 200, ~s({"title":{"value":"Vintage lamp"},"pictures":[]}))
+          Plug.Conn.send_resp(conn, 200, @draft_page)
         else
           conn
           |> Plug.Conn.put_resp_header(
@@ -83,7 +98,7 @@ defmodule Flipper.Ebay.SellerHubTest do
     stub =
       stub_ebay(fn conn ->
         send(parent, {:headers, conn.req_headers})
-        Plug.Conn.send_resp(conn, 200, ~s({"title":{"value":"Vintage lamp"},"pictures":[]}))
+        Plug.Conn.send_resp(conn, 200, @draft_page)
       end)
 
     assert {:ok, %{title: "Vintage lamp"}} =
@@ -154,7 +169,6 @@ defmodule Flipper.Ebay.SellerHubTest do
 
   @listing_page ~S"""
   <html>
-    <div data-srt="{&quot;/lstng/api/listing_draft/:draftId(\\d+)/skip_validation&quot;:&quot;srt-token&quot;}"></div>
     <script>
       window.model = {"epsData":{"s":"SuperSize","n":"i","v":"2","uaek":"640","uaes":"uaes-token","aXRequest":"2","wm":"","endpoint":"https://mach-100.ebay.com/ws/eBayISAPI.dll?EpsBasic","type":"POST"},
         "PHOTOS":{"_type":"PhotosViewHelix","photosInput":{"photos":[
@@ -165,11 +179,9 @@ defmodule Flipper.Ebay.SellerHubTest do
   </html>
   """
 
-  test "the listing page holds the upload fields, save token, and current photos" do
+  test "the listing page holds the upload fields and current photos" do
     assert {:ok, %{"uaes" => "uaes-token", "endpoint" => "https://mach-100" <> _}} =
              Client.eps_data(@listing_page)
-
-    assert {:ok, "srt-token"} = Client.save_token(@listing_page)
 
     assert {:ok,
             [
@@ -180,7 +192,6 @@ defmodule Flipper.Ebay.SellerHubTest do
 
   test "a page without them is an error" do
     assert {:error, _} = Client.eps_data("<html></html>")
-    assert {:error, _} = Client.save_token("<html></html>")
     assert {:error, _} = Client.draft_photos("<html></html>")
   end
 

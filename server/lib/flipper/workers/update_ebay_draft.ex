@@ -1,6 +1,6 @@
-defmodule Flipper.Workers.RemoveEbayFields do
+defmodule Flipper.Workers.UpdateEbayDraft do
   @moduledoc """
-  Removes the approved fields from the eBay draft and finishes it.
+  Saves the approved photo and field removals to the eBay draft and finishes it.
   """
 
   use Oban.Worker,
@@ -18,12 +18,12 @@ defmodule Flipper.Workers.RemoveEbayFields do
   def perform(%Oban.Job{args: %{"draft_id" => id}, attempt: attempt, max_attempts: max_attempts}) do
     draft = Drafts.get_draft!(id)
 
-    case Drafts.remove_ebay_fields(draft) do
+    case Drafts.update_on_ebay(draft) do
       :ok ->
         :ok
 
       {:error, reason} when attempt == max_attempts ->
-        Drafts.record_removal_error(Drafts.get_draft!(id), error_message(reason))
+        Drafts.record_ebay_error(Drafts.get_draft!(id), error_message(reason))
         {:error, reason}
 
       {:error, reason} ->
