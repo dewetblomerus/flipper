@@ -66,7 +66,7 @@ defmodule Flipper.Ebay.SellerHub.DraftList do
       time = {index + 1, String.to_integer(day), hour, String.to_integer(minute)}
       this_year = utc(now.year, time, @offsets[zone])
 
-      if this_year && DateTime.diff(this_year, now, :hour) < 24,
+      if this_year && DateTime.compare(this_year, now) != :gt,
         do: this_year,
         else: utc(now.year - 1, time, @offsets[zone])
     else

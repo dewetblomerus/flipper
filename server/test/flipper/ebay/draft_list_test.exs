@@ -34,6 +34,8 @@ defmodule Flipper.Ebay.DraftListTest do
       {"Nov 24 at 7:24pm PST", ~U[2026-11-25 03:24:00.000000Z]},
       {"Sep 3 at 12:05am PDT", ~U[2026-09-03 07:05:00.000000Z]},
       {"Nov 25 at 12:30pm PST", ~U[2026-11-25 20:30:00.000000Z]},
+      {"Nov 25 at 8:00pm PST", ~U[2026-11-26 04:00:00.000000Z]},
+      {"Nov 25 at 8:01pm PST", ~U[2025-11-26 04:01:00.000000Z]},
       {"Dec 20 at 9:00am PST", ~U[2025-12-20 17:00:00.000000Z]},
       {"yesterday", nil},
       {"", nil}
