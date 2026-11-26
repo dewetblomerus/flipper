@@ -3,6 +3,9 @@ defmodule FlipperWeb.DraftLive.Show do
 
   alias Flipper.Drafts
 
+  # The photo pick is locked from its approval on.
+  @photo_locked ~w(photo_edits_approved field_removals_drafted field_removals_approved finished)
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -34,11 +37,44 @@ defmodule FlipperWeb.DraftLive.Show do
       <p :if={@draft.fetch_error}>{@draft.fetch_error}</p>
 
       <div :if={ebay_status(@draft)} class="flex items-center gap-4">
-        <p id="ebay-photo-status">{ebay_status(@draft)}</p>
+        <p id="ebay-status">{ebay_status(@draft)}</p>
         <.button :if={retry_ebay?(@draft)} id="retry-ebay-photo" phx-click="retry_ebay_photo">
           Retry
         </.button>
+        <.button :if={@draft.removal_error} id="retry-removals" phx-click="retry_removals">
+          Retry
+        </.button>
       </div>
+
+      <section
+        :if={@removals != []}
+        id="field-removals"
+        class="mb-8 space-y-3 rounded-xl border border-base-300 p-4"
+      >
+        <h2 class="text-lg font-semibold">{removals_title(@draft)}</h2>
+        <p :if={reviewing?(@draft)} class="text-sm text-base-content/70">
+          Approving removes the ticked fields from the eBay draft. Untick a field to keep it.
+        </p>
+        <.form
+          for={@removal_form}
+          id="field-removals-form"
+          phx-change="select_removals"
+          phx-submit="approve_removals"
+        >
+          <.input
+            :for={{field, index} <- Enum.with_index(@removals)}
+            type="checkbox"
+            id={"removal-#{index}"}
+            name={"remove[#{index}]"}
+            label={"#{field.label}: #{field.value}"}
+            checked={field.name in @selected}
+            disabled={not reviewing?(@draft)}
+          />
+          <.button :if={reviewing?(@draft)} id="approve-removals" variant="primary">
+            Approve removals
+          </.button>
+        </.form>
+      </section>
 
       <ul :if={@draft.photos != []} id="draft-photos" class="space-y-8">
         <li
@@ -132,7 +168,8 @@ defmodule FlipperWeb.DraftLive.Show do
      socket
      |> assign(:page_title, "Show Draft")
      |> assign(:refreshing, false)
-     |> assign(:draft, draft)}
+     |> assign(:removal_form, to_form(%{}, as: :remove))
+     |> assign_draft(draft)}
   end
 
   @impl true
@@ -144,7 +181,7 @@ defmodule FlipperWeb.DraftLive.Show do
         {:noreply,
          socket
          |> assign(:refreshing, draft.photos == [])
-         |> assign(:draft, draft)}
+         |> assign_draft(draft)}
 
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Refresh failed.")}
@@ -155,7 +192,7 @@ defmodule FlipperWeb.DraftLive.Show do
   def handle_event("redo_edits", _params, socket) do
     case Drafts.redo_edits(socket.assigns.draft) do
       {:ok, draft} ->
-        {:noreply, assign(socket, :draft, Drafts.get_draft!(draft.id))}
+        {:noreply, assign_draft(socket, Drafts.get_draft!(draft.id))}
 
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Could not redo the edit.")}
@@ -166,10 +203,42 @@ defmodule FlipperWeb.DraftLive.Show do
   def handle_event("retry_ebay_photo", _params, socket) do
     case Drafts.retry_ebay_photo(socket.assigns.draft) do
       {:ok, _photo} ->
-        {:noreply, assign(socket, :draft, Drafts.get_draft!(socket.assigns.draft.id))}
+        {:noreply, reload(socket)}
 
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Nothing to retry.")}
+    end
+  end
+
+  @impl true
+  def handle_event("retry_removals", _params, socket) do
+    case Drafts.retry_removals(socket.assigns.draft) do
+      {:ok, _draft} ->
+        {:noreply, reload(socket)}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Nothing to retry.")}
+    end
+  end
+
+  @impl true
+  def handle_event("select_removals", params, socket) do
+    {:noreply, assign(socket, :selected, ticked(socket.assigns.removals, params))}
+  end
+
+  @impl true
+  def handle_event("approve_removals", params, socket) do
+    names = ticked(socket.assigns.removals, params)
+
+    case Drafts.approve_field_removals(socket.assigns.draft, names) do
+      {:ok, _draft} ->
+        {:noreply, reload(socket)}
+
+      {:error, :invalid_transition} ->
+        {:noreply, put_flash(socket, :error, "Those removals are already approved.")}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Could not approve the removals.")}
     end
   end
 
@@ -193,7 +262,17 @@ defmodule FlipperWeb.DraftLive.Show do
 
   defp redo_edit?(_draft), do: false
 
-  defp approved?(draft), do: draft.state == "photo_edits_approved"
+  defp approved?(draft), do: draft.state in @photo_locked
+
+  defp reviewing?(draft), do: draft.state == "field_removals_drafted"
+
+  defp removals_title(%{state: "finished"}), do: "Ticked fields were removed"
+  defp removals_title(_draft), do: "Fields to remove"
+
+  defp ebay_status(%{state: "photo_edits_approved", removal_error: error})
+       when is_binary(error) do
+    "Reading the eBay draft failed: #{error}"
+  end
 
   defp ebay_status(%{state: "photo_edits_approved", photos: [%{use_edited: true} = first | _]}) do
     cond do
@@ -203,7 +282,57 @@ defmodule FlipperWeb.DraftLive.Show do
     end
   end
 
+  defp ebay_status(%{state: "photo_edits_approved"}), do: "Reading the eBay draft."
+
+  defp ebay_status(%{state: "field_removals_approved", removal_error: error})
+       when is_binary(error) do
+    "Removing fields failed: #{error}"
+  end
+
+  defp ebay_status(%{state: "field_removals_approved"}), do: "Removing fields on eBay."
+  defp ebay_status(%{state: "finished"}), do: "eBay draft updated."
   defp ebay_status(_draft), do: nil
+
+  defp assign_draft(socket, draft) do
+    removals = removals(draft)
+
+    socket
+    |> assign(:selected, selected(socket.assigns, draft, removals))
+    |> assign(:removals, removals)
+    |> assign(:draft, draft)
+  end
+
+  defp reload(socket), do: assign_draft(socket, Drafts.get_draft!(socket.assigns.draft.id))
+
+  defp removals(%{state: state} = draft)
+       when state in ["field_removals_drafted", "field_removals_approved", "finished"] do
+    Drafts.proposed_removals(draft)
+  end
+
+  defp removals(_draft), do: []
+
+  # Every field starts ticked. A reload during the review keeps the person's ticks.
+  defp selected(
+         %{draft: %{state: "field_removals_drafted"}, selected: selected},
+         %{state: "field_removals_drafted"},
+         _removals
+       ) do
+    selected
+  end
+
+  defp selected(_assigns, %{state: "field_removals_drafted"}, removals) do
+    Enum.map(removals, & &1.name)
+  end
+
+  defp selected(_assigns, draft, _removals), do: draft.approved_removals || []
+
+  defp ticked(removals, params) do
+    ticks = Map.get(params, "remove", %{})
+
+    for {field, index} <- Enum.with_index(removals),
+        ticks[to_string(index)] == "true",
+        do: field.name
+  end
 
   defp retry_ebay?(%{state: "photo_edits_approved", photos: [first | _]}) do
     first.use_edited == true and is_binary(first.ebay_error)
@@ -214,7 +343,7 @@ defmodule FlipperWeb.DraftLive.Show do
   defp save_choice(socket, draft, photo, use_edited) do
     case Drafts.choose_edit(photo, use_edited) do
       {:ok, _photo} ->
-        {:noreply, assign(socket, :draft, Drafts.get_draft!(draft.id))}
+        {:noreply, assign_draft(socket, Drafts.get_draft!(draft.id))}
 
       {:error, :not_edited} ->
         {:noreply, put_flash(socket, :error, "That photo is still editing.")}
@@ -232,6 +361,6 @@ defmodule FlipperWeb.DraftLive.Show do
     {:noreply,
      socket
      |> assign(:refreshing, false)
-     |> assign(:draft, Drafts.get_draft!(socket.assigns.draft.id))}
+     |> reload()}
   end
 end

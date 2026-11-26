@@ -8,8 +8,10 @@ defmodule FlipperWeb.DraftLiveTest do
   alias Flipper.Drafts
   alias Flipper.Drafts.Photo
   alias Flipper.Repo
+  alias Flipper.Workers.DraftFieldRemovals
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
+  alias Flipper.Workers.RemoveEbayFields
   alias Flipper.Workers.ReplaceEbayPhoto
 
   @url "https://www.ebay.com/lstng?mode=SellLikeItem&draft_id=5345502780022"
@@ -199,13 +201,13 @@ defmodule FlipperWeb.DraftLiveTest do
       assert has_element?(view, "#photo-#{photo.id}-edited[aria-pressed='true'][disabled]")
       assert has_element?(view, "#photo-#{photo.id}-original[disabled]")
       refute has_element?(view, "#redo-edits")
-      assert has_element?(view, "#ebay-photo-status", "Replacing on eBay")
+      assert has_element?(view, "#ebay-status", "Replacing on eBay")
 
       assert :ok = perform_job(ReplaceEbayPhoto, %{photo_id: photo.id})
-      assert has_element?(view, "#ebay-photo-status", "Replaced on eBay")
+      assert has_element?(view, "#ebay-status", "Replaced on eBay")
     end
 
-    test "picking the original approves it without eBay", %{conn: conn} do
+    test "picking the original approves it without replacing a photo", %{conn: conn} do
       {:ok, draft} = Drafts.paste_url(@url)
       {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
       assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
@@ -216,8 +218,56 @@ defmodule FlipperWeb.DraftLiveTest do
       assert Repo.get!(Photo, photo.id).use_edited == false
       assert Drafts.get_draft!(draft.id).state == "photo_edits_approved"
       assert has_element?(view, "#photo-#{photo.id}-original[aria-pressed='true'][disabled]")
-      refute has_element?(view, "#ebay-photo-status")
+      assert has_element?(view, "#ebay-status", "Reading the eBay draft")
+      refute has_element?(view, "#field-removals")
       assert [] = all_enqueued(worker: ReplaceEbayPhoto)
+    end
+
+    test "a person reviews the removals, keeps one, and finishes the draft", %{conn: conn} do
+      {view, draft, photo} = reviewing_view(conn, "22")
+
+      assert has_element?(view, "#removal-0[checked]")
+      assert has_element?(view, "#removal-1[checked]")
+      assert has_element?(view, "#field-removals", "Color: Black")
+      assert has_element?(view, "#photo-#{photo.id}-original[disabled]")
+      refute has_element?(view, "#redo-edits")
+
+      view
+      |> form("#field-removals-form", %{"remove" => %{"0" => "false"}})
+      |> render_change()
+
+      Phoenix.PubSub.broadcast(Flipper.PubSub, "draft:#{draft.id}", {:draft_changed, draft.id})
+      _ = :sys.get_state(view.pid)
+      refute has_element?(view, "#removal-0[checked]")
+      assert has_element?(view, "#removal-1[checked]")
+
+      view |> form("#field-removals-form") |> render_submit()
+      assert Drafts.get_draft!(draft.id).approved_removals == ["subtitle"]
+      assert has_element?(view, "#ebay-status", "Removing fields on eBay")
+      assert has_element?(view, "#removal-1[checked][disabled]")
+      refute has_element?(view, "#approve-removals")
+
+      assert :ok = perform_job(RemoveEbayFields, %{draft_id: draft.id})
+      assert has_element?(view, "#ebay-status", "eBay draft updated")
+      assert has_element?(view, "#photo-#{photo.id}-original[disabled]")
+      refute has_element?(view, "#redo-edits")
+    end
+
+    test "a failed removal shows the error and retries", %{conn: conn} do
+      {view, draft, _photo} = reviewing_view(conn, "501")
+      view |> form("#field-removals-form") |> render_submit()
+
+      assert {:error, _} = perform_job(RemoveEbayFields, %{draft_id: draft.id}, attempt: 3)
+      assert has_element?(view, "#ebay-status", "eBay returned 501")
+
+      Repo.update_all(from(j in Oban.Job, where: j.state == "available"),
+        set: [state: "discarded"]
+      )
+
+      view |> element("#retry-removals") |> render_click()
+      assert has_element?(view, "#ebay-status", "Removing fields on eBay")
+      refute has_element?(view, "#retry-removals")
+      assert [_] = all_enqueued(worker: RemoveEbayFields, args: %{draft_id: draft.id})
     end
 
     test "a failed eBay replacement shows the error and retries", %{conn: conn} do
@@ -231,14 +281,14 @@ defmodule FlipperWeb.DraftLiveTest do
       assert {:error, _} =
                perform_job(ReplaceEbayPhoto, %{photo_id: photo.id}, attempt: 3, max_attempts: 3)
 
-      assert has_element?(view, "#ebay-photo-status", "eBay returned 500")
+      assert has_element?(view, "#ebay-status", "eBay returned 500")
 
       Repo.update_all(from(j in Oban.Job, where: j.state == "available"),
         set: [state: "discarded"]
       )
 
       view |> element("#retry-ebay-photo") |> render_click()
-      assert has_element?(view, "#ebay-photo-status", "Replacing on eBay")
+      assert has_element?(view, "#ebay-status", "Replacing on eBay")
       assert [_] = all_enqueued(worker: ReplaceEbayPhoto, args: %{photo_id: photo.id})
     end
 
@@ -264,6 +314,17 @@ defmodule FlipperWeb.DraftLiveTest do
 
       assert get(build_conn(), ~p"/photos/#{photo}/edited").status == 404
     end
+  end
+
+  defp reviewing_view(conn, ebay_draft_id) do
+    {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=#{ebay_draft_id}")
+    {:ok, view, _html} = live(conn, ~p"/drafts/#{draft}")
+    assert :ok = perform_job(FetchDraft, %{draft_id: draft.id})
+    photo = hd(Drafts.get_draft!(draft.id).photos)
+    assert :ok = perform_job(EditPhoto, %{photo_id: photo.id})
+    view |> element("#photo-#{photo.id}-original") |> render_click()
+    assert :ok = perform_job(DraftFieldRemovals, %{draft_id: draft.id})
+    {view, draft, photo}
   end
 
   defp insert_photo(draft, position) do

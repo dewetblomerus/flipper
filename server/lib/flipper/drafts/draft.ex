@@ -7,6 +7,8 @@ defmodule Flipper.Drafts.Draft do
     field :title, :string
     field :state, :string
     field :fetch_error, :string
+    field :approved_removals, {:array, :string}
+    field :removal_error, :string
     has_many :photos, Flipper.Drafts.Photo
 
     timestamps(type: :utc_datetime_usec)

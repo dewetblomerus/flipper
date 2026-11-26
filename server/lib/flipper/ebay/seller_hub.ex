@@ -1,6 +1,7 @@
 defmodule Flipper.Ebay.SellerHub do
   @moduledoc """
-  Fetches a Seller Hub draft, downloads its photos, and replaces its first photo.
+  Reads a Seller Hub draft, downloads its photos, replaces its first photo, and removes
+  optional fields.
   """
 
   def fetch(ebay_draft_id), do: impl().fetch(ebay_draft_id)
@@ -12,6 +13,10 @@ defmodule Flipper.Ebay.SellerHub do
   end
 
   def set_first_photo(ebay_draft_id, url), do: impl().set_first_photo(ebay_draft_id, url)
+
+  def read_draft(ebay_draft_id), do: impl().read_draft(ebay_draft_id)
+
+  def remove_fields(ebay_draft_id, names), do: impl().remove_fields(ebay_draft_id, names)
 
   defp impl do
     Application.get_env(:flipper, :seller_hub, Flipper.Ebay.SellerHub.Client)
