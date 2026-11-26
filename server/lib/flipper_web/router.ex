@@ -23,6 +23,7 @@ defmodule FlipperWeb.Router do
     live "/drafts", DraftLive.Index, :index
     live "/drafts/new", DraftLive.Form, :new
     live "/drafts/:id", DraftLive.Show, :show
+    live "/auto", AutoLive
   end
 
   # Other scopes may use custom stacks.

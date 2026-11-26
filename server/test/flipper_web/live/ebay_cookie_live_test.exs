@@ -96,7 +96,7 @@ defmodule FlipperWeb.EbayCookieLiveTest do
 
   test "every page has the popover only while the cookie is needed", %{conn: conn} do
     {:ok, draft} = Drafts.paste_url("https://www.ebay.com/lstng?draft_id=1")
-    paths = [~p"/", ~p"/drafts", ~p"/drafts/new", ~p"/drafts/#{draft}"]
+    paths = [~p"/", ~p"/drafts", ~p"/drafts/new", ~p"/drafts/#{draft}", ~p"/auto"]
 
     for path <- paths, do: assert(popover?(conn, path))
 
