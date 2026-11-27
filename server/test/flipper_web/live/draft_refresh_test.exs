@@ -21,7 +21,7 @@ defmodule FlipperWeb.DraftRefreshTest do
     end)
   end
 
-  test "queues one import in the ebay queue", %{conn: conn} do
+  test "queues one import as a person's read", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/drafts")
 
     view |> element("#refresh-drafts") |> render_click()
@@ -29,15 +29,15 @@ defmodule FlipperWeb.DraftRefreshTest do
     assert has_element?(view, "#refresh-drafts[disabled]", "Refreshing")
     assert {:ok, %{conflict?: true}} = Drafts.refresh_list()
     assert [_] = all_enqueued(worker: ImportDrafts)
-    assert_enqueued(queue: :ebay, worker: ImportDrafts)
+    assert_enqueued(queue: :ebay_cookie_requests, priority: 1, worker: ImportDrafts)
   end
 
-  test "takes over an import waiting in the paced queue" do
+  test "takes over a waiting unattended import" do
     {:ok, _job} = Oban.insert(ImportDrafts.new(%{}))
 
     assert {:ok, _job} = Drafts.refresh_list()
 
-    assert [%{queue: "ebay"}] = all_enqueued(worker: ImportDrafts)
+    assert [%{priority: 1}] = all_enqueued(worker: ImportDrafts)
   end
 
   test "lists the new drafts once the import finishes", %{conn: conn} do

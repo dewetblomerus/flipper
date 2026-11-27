@@ -196,10 +196,9 @@ defmodule Flipper.DraftsTest do
 
     assert :ok = Drafts.retry_failed()
 
-    assert [_] = all_enqueued(queue: :ebay)
-    assert [_] = all_enqueued(queue: :ebay_automated)
-    assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: unread.id})
-    assert_enqueued(queue: :ebay, worker: UpdateEbayDraft, args: %{draft_id: unsaved.id})
+    assert [_, _] = all_enqueued(queue: :ebay_cookie_requests)
+    assert_enqueued(priority: 2, worker: FetchDraft, args: %{draft_id: unread.id})
+    assert_enqueued(priority: 0, worker: UpdateEbayDraft, args: %{draft_id: unsaved.id})
     assert Repo.get!(Draft, unread.id).fetch_error == nil
     assert Repo.get!(Draft, unsaved.id).ebay_error == nil
     assert_received {:draft_changed, _}

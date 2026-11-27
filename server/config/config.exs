@@ -16,11 +16,10 @@ config :flipper,
 
 config :flipper, Oban,
   repo: Flipper.Repo,
-  # A person's eBay work runs in ebay, unattended work in ebay_automated. The cooldown
-  # jitters ebay_automated job starts, at least 5s apart.
+  # Every eBay cookie request runs in ebay_cookie_requests. The cooldown jitters its job
+  # starts, at least 5s apart.
   queues: [
-    ebay: 1,
-    ebay_automated: [limit: 1, dispatch_cooldown: :timer.seconds(10)],
+    ebay_cookie_requests: [limit: 1, dispatch_cooldown: :timer.seconds(10)],
     photos: 1,
     upkeep: 1
   ],

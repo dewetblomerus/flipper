@@ -3,8 +3,11 @@ defmodule Flipper.Workers.UpdateEbayDraft do
   Saves the approved photo and field removals to the eBay draft and finishes it.
   """
 
+  alias Flipper.Workers.EbayPriority
+
   use Oban.Worker,
-    queue: :ebay,
+    queue: :ebay_cookie_requests,
+    priority: EbayPriority.write(),
     max_attempts: 3,
     unique: [
       period: :infinity,

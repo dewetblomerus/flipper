@@ -15,9 +15,8 @@ defmodule Flipper.Application do
       {Phoenix.PubSub, name: Flipper.PubSub},
       Flipper.Ebay.Session,
       {Oban, Application.fetch_env!(:flipper, Oban)},
-      # Imports the drafts list at boot, which also rejects a stale cookie. It runs
-      # here, since an Oban job can run on any server that shares the database.
-      {Task, &ImportDrafts.run/0},
+      # Imports the drafts list at boot, which also rejects a stale cookie.
+      {Task, &queue_boot_import/0},
       {DNSCluster, query: Application.get_env(:flipper, :dns_cluster_query) || :ignore},
       # Start a worker by calling: Flipper.Worker.start_link(arg)
       # {Flipper.Worker, arg},
@@ -37,5 +36,11 @@ defmodule Flipper.Application do
   def config_change(changed, _new, removed) do
     FlipperWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  defp queue_boot_import do
+    if Application.get_env(:flipper, :import_at_boot, true) do
+      Oban.insert!(ImportDrafts.new(%{}))
+    end
   end
 end

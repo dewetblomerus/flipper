@@ -1,21 +1,24 @@
 defmodule Flipper.Workers.FetchDraft do
   @moduledoc """
-  Loads a draft's title, SKU, and photos from Seller Hub. A draft has one read at a time,
-  across both eBay queues.
+  Loads a draft's title, SKU, and photos from Seller Hub. A draft has one read at a time.
   """
 
+  alias Flipper.Workers.EbayPriority
+
   use Oban.Worker,
-    queue: :ebay,
+    queue: :ebay_cookie_requests,
+    priority: EbayPriority.person_read(),
     max_attempts: 3,
     unique: [
       period: :infinity,
       states: :incomplete,
-      fields: [:worker, :args],
       keys: [:draft_id]
     ]
 
   alias Flipper.Drafts
   alias Flipper.Ebay.Session
+
+  @unattended EbayPriority.unattended_read()
 
   @impl true
   def perform(%Oban.Job{args: %{"draft_id" => id}} = job) do
@@ -30,7 +33,7 @@ defmodule Flipper.Workers.FetchDraft do
   end
 
   # An unattended read is cancelled, not retried, while the cookie needs a person.
-  defp blocked?(%Oban.Job{queue: "ebay_automated"}, %{photos: []}), do: Session.status() != :ok
+  defp blocked?(%Oban.Job{priority: @unattended}, %{photos: []}), do: Session.status() != :ok
   defp blocked?(_job, _draft), do: false
 
   defp fetch(draft, %Oban.Job{attempt: attempt, max_attempts: max_attempts}) do

@@ -2,15 +2,15 @@
 
 A person pastes an eBay draft URL. Flipper reads `draft_id` or `draftId` from the query string and creates one draft in `started`. The stored value is `drafts.ebay_draft_id`.
 
-While no eBay cookie is saved, or after eBay rejects it, a popover blocks every page and asks for one, with eBay's reason. Any request answered with a sign-in redirect, a browser check, 401, 403, or 429 rejects it. No server then sends eBay anything, photo downloads included, until a cookie is saved. Saving a cookie enqueues a job for each failed read and eBay update. Those reads run in the paced queue. The popover keeps its field focused for pasting.
+While no eBay cookie is saved, or after eBay rejects it, a popover blocks every page and asks for one, with eBay's reason. Any request answered with a sign-in redirect, a browser check, 401, 403, or 429 rejects it. No server then sends eBay anything, photo downloads included, until a cookie is saved. Saving a cookie enqueues a job for each failed read and eBay update. Those reads are unattended. The popover keeps its field focused for pasting.
 
 The cookie is saved to `~/code/flipper/ebay_cookie`, or `/code/flipper/ebay_cookie` without a home directory. A rejection is saved beside it in `ebay_cookie.rejected`: the cookie's digest, eBay's status, and the reason. A file holding only the digest rejects too. Every worktree's server uses both files and notices a change within a second.
 
 Flipper also reads the Seller Hub drafts list hourly, as each server starts, and on Refresh Drafts: one request for up to 200 drafts. The start read also checks the cookie. A server whose cookie is missing or rejected reads nothing. The list needs its photo and Custom label (SKU) columns.
 
-Each unknown draft is added. One listed with both a SKU and a photo is read in the paced queue. Any other waits unread in `awaiting_sku` with the listed title and SKU, and is read once the list shows both. An import queues a draft's read at most once a day, and leaves a failed read to Refresh or a saved cookie. An import never writes to eBay.
+Each unknown draft is added. One listed with both a SKU and a photo gets an unattended read. Any other waits unread in `awaiting_sku` with the listed title and SKU, and is read once the list shows both. An import queues a draft's read at most once a day, and leaves a failed read to Refresh or a saved cookie. An import never writes to eBay.
 
-Pasting or refreshing a draft whose read waits in the paced queue moves it to the `ebay` queue.
+Pasting or refreshing a draft whose unattended read is waiting raises it to a person's [priority](design.md).
 
 An Oban job reads the Seller Hub draft with the saved cookie. It stores the title and the Custom label (SKU). A draft with both a SKU and photos downloads every photo at eBay's largest size and moves to `photos_taken`. Any other draft moves to `awaiting_sku` with no photos saved. Refresh on `/drafts/:id` reads the Seller Hub draft again when the draft has no photos.
 
@@ -38,7 +38,7 @@ See [eBay draft API](ebay/README.md).
 
 Pasting an id that already exists opens that draft.
 
-`/drafts` lists each draft with its first photo, furthest state first, then oldest eBay listing, and updates as drafts change. Refresh Drafts queues an import in the `ebay` queue, taking over one waiting in the paced queue. One import job waits or runs at a time. The page shows Refreshing, then the result. `/drafts/new` pastes a URL. `/drafts/:id` opens one.
+`/drafts` lists each draft with its first photo, furthest state first, then oldest eBay listing, and updates as drafts change. Refresh Drafts queues an import as a person's read, taking over a waiting unattended one. One import job waits or runs at a time. The page shows Refreshing, then the result. `/drafts/new` pastes a URL. `/drafts/:id` opens one.
 
 `/auto` shows one pending decision at a time as that draft's page, oldest draft first. A draft in `photo_edits_drafted` has a photo pick pending. The page keeps a decision while it is pending, then shows the next. With none pending, it says Nothing to decide until one arrives.
 
