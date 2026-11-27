@@ -12,13 +12,17 @@ defmodule Flipper.Drafts do
   alias Flipper.Ebay.SellerHub
   alias Flipper.Ebay.SellerHub.OptionalFields
   alias Flipper.Repo
+  alias Flipper.Workers.EbayPriority
   alias Flipper.Workers.EditPhoto
   alias Flipper.Workers.FetchDraft
   alias Flipper.Workers.ImportDrafts
   alias Flipper.Workers.UpdateEbayDraft
 
-  # The job states a person's request can move out of the paced queue.
-  @waiting [available: [:queue], scheduled: [:queue], retryable: [:queue]]
+  @person_read EbayPriority.person_read()
+  @unattended_read EbayPriority.unattended_read()
+
+  # The job states in which a person's request can raise an unattended read.
+  @waiting [available: [:priority], scheduled: [:priority], retryable: [:priority]]
 
   # The job states with nothing left to run.
   @ended ["completed", "cancelled", "discarded"]
@@ -39,11 +43,11 @@ defmodule Flipper.Drafts do
   end
 
   @doc """
-  Queues the import a person asked for. It takes over one still waiting in the paced queue.
+  Queues the import a person asked for. It takes over a waiting unattended one.
   """
   def refresh_list do
     %{}
-    |> ImportDrafts.new(queue: :ebay, replace: @waiting)
+    |> ImportDrafts.new(priority: @person_read, replace: @waiting)
     |> Oban.insert()
   end
 
@@ -240,7 +244,7 @@ defmodule Flipper.Drafts do
   end
 
   @doc """
-  Queues each failed eBay job again. Reads are paced, since there can be many.
+  Queues each failed eBay job again. Reads are unattended, since there can be many.
   """
   def retry_failed do
     Enum.each(failed_fetches(), &retry_fetch/1)
@@ -257,7 +261,7 @@ defmodule Flipper.Drafts do
     end
   end
 
-  def refresh(%Draft{} = draft), do: reread(draft, :ebay)
+  def refresh(%Draft{} = draft), do: reread(draft, @person_read)
 
   @doc """
   Adds each unknown draft on the Seller Hub list. A draft is read once the list shows it
@@ -341,7 +345,7 @@ defmodule Flipper.Drafts do
 
   defp queue_import_read(draft) do
     with {:ok, draft} <- update_draft(draft, import_read_at: DateTime.utc_now()) do
-      enqueue_fetch(draft, :ebay_automated, retry: false)
+      enqueue_fetch(draft, @unattended_read, retry: false)
     end
   end
 
@@ -706,11 +710,11 @@ defmodule Flipper.Drafts do
     |> Repo.insert()
     |> case do
       {:ok, draft} ->
-        enqueue_fetch(draft, :ebay)
+        enqueue_fetch(draft, @person_read)
 
       {:error, changeset} ->
         if unique_ebay_draft_id?(changeset) do
-          enqueue_fetch(Repo.get_by!(Draft, ebay_draft_id: ebay_draft_id), :ebay)
+          enqueue_fetch(Repo.get_by!(Draft, ebay_draft_id: ebay_draft_id), @person_read)
         else
           {:error, changeset}
         end
@@ -740,17 +744,17 @@ defmodule Flipper.Drafts do
   end
 
   defp retry_fetch(draft) do
-    with {:ok, draft} <- reread(draft, :ebay_automated) do
+    with {:ok, draft} <- reread(draft, @unattended_read) do
       broadcast_changed(draft.id)
     end
   end
 
-  defp reread(draft, queue) do
+  defp reread(draft, priority) do
     if has_photos?(draft) do
       {:ok, draft}
     else
       with {:ok, draft} <- clear_fetch_error(draft) do
-        enqueue_fetch(draft, queue)
+        enqueue_fetch(draft, priority)
       end
     end
   end
@@ -761,12 +765,12 @@ defmodule Flipper.Drafts do
     |> Repo.update()
   end
 
-  defp enqueue_fetch(draft, queue, opts \\ []) do
+  defp enqueue_fetch(draft, priority, opts \\ []) do
     if has_photos?(draft) do
       {:ok, draft}
     else
       draft
-      |> fetch_job(queue)
+      |> fetch_job(priority)
       |> Oban.insert(opts)
       |> case do
         {:ok, _job} -> {:ok, draft}
@@ -775,13 +779,13 @@ defmodule Flipper.Drafts do
     end
   end
 
-  # A person's read takes over one still waiting in the paced queue.
-  defp fetch_job(%Draft{id: id}, :ebay) do
-    FetchDraft.new(%{draft_id: id}, replace: @waiting)
+  # A person's read takes over a waiting unattended one.
+  defp fetch_job(%Draft{id: id}, @person_read) do
+    FetchDraft.new(%{draft_id: id}, priority: @person_read, replace: @waiting)
   end
 
-  defp fetch_job(%Draft{id: id}, :ebay_automated) do
-    FetchDraft.new(%{draft_id: id}, queue: :ebay_automated)
+  defp fetch_job(%Draft{id: id}, @unattended_read) do
+    FetchDraft.new(%{draft_id: id}, priority: @unattended_read)
   end
 
   defp has_photos?(%Draft{id: id}) do

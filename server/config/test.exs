@@ -40,7 +40,9 @@ config :flipper,
   photo_dir: Path.expand("../tmp/test_uploads", __DIR__),
   ebay_cookie_path: Path.expand("../tmp/ebay_cookie", __DIR__),
   photo_editor: Flipper.Photos.FakeEditor,
-  seller_hub: Flipper.Ebay.FakeSellerHub
+  seller_hub: Flipper.Ebay.FakeSellerHub,
+  # A job inserted at boot would outlive the sandbox.
+  import_at_boot: false
 
 # Print only warnings and errors during test
 config :logger, level: :warning

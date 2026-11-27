@@ -21,7 +21,7 @@ defmodule Flipper.ImportDraftsTest do
     end)
   end
 
-  test "adds only unknown drafts and queues their reads in the paced queue" do
+  test "adds only unknown drafts and queues their reads as unattended" do
     {:ok, pasted} = paste("1")
     list([listed("1", "A-1"), listed("22", "A-2"), listed("22", "A-2")])
 
@@ -29,10 +29,12 @@ defmodule Flipper.ImportDraftsTest do
 
     assert [_, %Draft{state: "started"} = imported] = Repo.all(from d in Draft, order_by: d.id)
     assert imported.ebay_draft_id == "22"
-    assert [job] = all_enqueued(queue: :ebay_automated)
-    assert job.args == %{"draft_id" => imported.id}
-    assert [job] = all_enqueued(queue: :ebay)
-    assert job.args == %{"draft_id" => pasted.id}
+
+    assert [paste_job, import_job] =
+             Enum.sort_by(all_enqueued(queue: :ebay_cookie_requests), & &1.priority)
+
+    assert {paste_job.priority, paste_job.args} == {1, %{"draft_id" => pasted.id}}
+    assert {import_job.priority, import_job.args} == {2, %{"draft_id" => imported.id}}
 
     finish_jobs()
     assert :ok = perform_job(ImportDrafts, %{})
@@ -64,7 +66,7 @@ defmodule Flipper.ImportDraftsTest do
     assert Repo.get!(Draft, pasted.id).listed_at == created
   end
 
-  test "a paste or a refresh takes over a waiting import" do
+  test "a paste or a refresh takes over a waiting unattended read" do
     list([listed("1", "A-1"), listed("22", "A-2")])
     assert :ok = perform_job(ImportDrafts, %{})
 
@@ -72,9 +74,10 @@ defmodule Flipper.ImportDraftsTest do
     refreshed = Repo.get_by!(Draft, ebay_draft_id: "22")
     {:ok, _draft} = Drafts.refresh(refreshed)
 
-    assert [] = all_enqueued(queue: :ebay_automated)
+    jobs = all_enqueued(worker: FetchDraft)
+    assert Enum.map(jobs, & &1.priority) == [1, 1]
 
-    assert Enum.sort(Enum.map(all_enqueued(queue: :ebay), & &1.args["draft_id"])) ==
+    assert Enum.sort(Enum.map(jobs, & &1.args["draft_id"])) ==
              Enum.sort([pasted.id, refreshed.id])
   end
 
@@ -90,7 +93,7 @@ defmodule Flipper.ImportDraftsTest do
 
     list([listed("22", "A-2")])
     assert :ok = perform_job(ImportDrafts, %{})
-    assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: waiting.id})
+    assert_enqueued(priority: 2, worker: FetchDraft, args: %{draft_id: waiting.id})
 
     assert :ok = perform_job(FetchDraft, %{draft_id: waiting.id})
     assert Repo.get!(Draft, waiting.id).state == "photos_taken"
@@ -102,7 +105,7 @@ defmodule Flipper.ImportDraftsTest do
 
     assert :ok = perform_job(ImportDrafts, %{})
 
-    assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: waiting.id})
+    assert_enqueued(priority: 2, worker: FetchDraft, args: %{draft_id: waiting.id})
   end
 
   test "a failed read insertion leaves a waiting draft eligible for another import" do
@@ -111,7 +114,7 @@ defmodule Flipper.ImportDraftsTest do
 
     Repo.query!("""
     ALTER TABLE oban_jobs ADD CONSTRAINT reject_automated_read
-      CHECK (queue <> 'ebay_automated')
+      CHECK (priority <> 2)
     """)
 
     assert_raise Ecto.ConstraintError, ~r/reject_automated_read/, fn ->
@@ -122,7 +125,7 @@ defmodule Flipper.ImportDraftsTest do
     Repo.query!("ALTER TABLE oban_jobs DROP CONSTRAINT reject_automated_read")
 
     assert :ok = perform_job(ImportDrafts, %{})
-    assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: waiting.id})
+    assert_enqueued(priority: 2, worker: FetchDraft, args: %{draft_id: waiting.id})
   end
 
   test "skips a read that another import queues after this one loads its drafts" do
@@ -153,7 +156,7 @@ defmodule Flipper.ImportDraftsTest do
     |> Repo.update!()
 
     assert :ok = perform_job(ImportDrafts, %{})
-    assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: draft.id})
+    assert_enqueued(priority: 2, worker: FetchDraft, args: %{draft_id: draft.id})
   end
 
   test "leaves a waiting draft with a failed read to a person" do
@@ -173,11 +176,9 @@ defmodule Flipper.ImportDraftsTest do
     :ok = Session.reject("secret-value", 429, "eBay returned 429")
 
     assert {:cancel, _} = perform_job(ImportDrafts, %{})
-    assert {:cancel, _} = ImportDrafts.run()
     refute_received :ebay_drafts_listed
 
-    assert {:cancel, _} =
-             perform_job(FetchDraft, %{draft_id: draft.id}, queue: :ebay_automated)
+    assert {:cancel, _} = perform_job(FetchDraft, %{draft_id: draft.id}, priority: 2)
 
     draft = Drafts.get_draft!(draft.id)
     assert draft.photos == []

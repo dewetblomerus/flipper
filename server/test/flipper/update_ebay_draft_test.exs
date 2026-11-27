@@ -53,7 +53,10 @@ defmodule Flipper.UpdateEbayDraftTest do
     draft = Repo.get!(Draft, draft.id)
     assert draft.state == "field_removals_approved"
     assert draft.approved_removals == @removals
-    assert [_] = all_enqueued(queue: :ebay, worker: UpdateEbayDraft)
+
+    assert [%{queue: "ebay_cookie_requests", priority: 0}] =
+             all_enqueued(worker: UpdateEbayDraft)
+
     assert_enqueued(worker: UpdateEbayDraft, args: %{draft_id: draft.id})
     refute_received {:ebay_draft_updated, _, _}
   end

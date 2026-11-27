@@ -112,7 +112,7 @@ defmodule FlipperWeb.EbayCookieLiveTest do
 
     save_cookie(view, "secret-value")
 
-    assert_enqueued(queue: :ebay_automated, worker: FetchDraft, args: %{draft_id: draft.id})
+    assert_enqueued(priority: 2, worker: FetchDraft, args: %{draft_id: draft.id})
     assert Drafts.get_draft!(draft.id).fetch_error == nil
   end
 
